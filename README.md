@@ -135,4 +135,6 @@ Design decisions that refine or deviate from the spec are recorded in
 
 ## License
 
-No license has been chosen yet. All rights reserved.
+Proprietary, all rights reserved. Periapsis is meant to become a commercial game, so no
+open-source license is granted. See [LICENSE](LICENSE). Third-party components keep their
+own licenses (doctest: MIT).
