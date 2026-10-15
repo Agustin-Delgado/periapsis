@@ -1,74 +1,78 @@
 # Periapsis
 
-Simulador de construcción de cohetes y exploración orbital en Unreal Engine 5 + C++.
-La especificación es `Docs/Especificacion_Tecnica_v0.1.pdf` (texto plano al lado, `.txt`,
-para leerla sin PDF). Las decisiones que la desvían o la precisan van en `Docs/adr/`.
+Rocket building and orbital exploration simulator in Unreal Engine 5 + C++.
+The specification is `Docs/TechnicalSpecification_v0.1.md` (the original, in Spanish, is
+`Docs/Especificacion_Tecnica_v0.1.pdf`). Decisions that deviate from it or refine it go in
+`Docs/adr/`.
 
-## Reglas duras
+## Hard rules
 
-- **C++ primero.** Blueprints solo para pegamento fino (UI, materiales).
-- **No editar binarios de Unreal** (`.uasset`, `.umap`, texturas, mallas): no se pueden
-  revisar en Git ni editar bien desde un agente. Lo que se pueda expresar como dato va a `Data/`.
-- **Unidades SI y `double`** en toda la simulación (m, kg, s, N). La conversión a
-  centímetros de Unreal vive **solo** en `FUnitBridge` (`Source/PeriapsisSim/Public/UnitBridge.h`).
-- **El Core no incluye headers de Unreal.** `Source/PeriapsisCore` es C++ estándar puro; la
-  única excepción es `PeriapsisCoreModule.cpp` (registro del módulo), que los tests excluyen
-  por nombre (`*Module.cpp`). Si un archivo del Core necesita algo de UE, va en Sim.
-- **Toda función no inline del Core lleva `PERIAPSISCORE_API`** (de `PeriapsisCore/Api.h`).
-  Sin eso, los tests de CMake pasan igual, pero Sim falla con `LNK2019`.
-- **Capas:** Core ← Sim ← Game ← Editor. Cada capa depende solo de las de abajo.
-- **El vector de estado es la fuente de verdad** de una órbita; los elementos se derivan.
-- **Código, comentarios y nombres en inglés.** Conversación y commits en español.
+- **Everything in the repository is in English:** code, comments, names, docs, data and
+  commit messages. Only the conversation with the user is in Spanish.
+- **C++ first.** Blueprints only for thin glue (UI, materials).
+- **Don't edit Unreal binaries** (`.uasset`, `.umap`, textures, meshes): they can't be
+  reviewed in Git or edited properly by an agent. Whatever can be expressed as data goes in
+  `Data/`.
+- **SI units and `double`** throughout the simulation (m, kg, s, N). The conversion to Unreal
+  centimeters lives **only** in `FUnitBridge` (`Source/PeriapsisSim/Public/UnitBridge.h`).
+- **The Core includes no Unreal headers.** `Source/PeriapsisCore` is pure standard C++; the
+  only exception is `PeriapsisCoreModule.cpp` (module registration), which the tests exclude
+  by name (`*Module.cpp`). If a Core file needs something from UE, it goes in Sim.
+- **Every non-inline Core function carries `PERIAPSISCORE_API`** (from
+  `PeriapsisCore/Api.h`). Without it the CMake tests still pass, but Sim fails with `LNK2019`.
+- **Layers:** Core ← Sim ← Game ← Editor. Each layer depends only on the ones below.
+- **The state vector is the source of truth** for an orbit; elements are derived.
 
-## Convenciones
+## Conventions
 
-- Fuera del Core: prefijos de UE (`A`, `U`, `F`, `E`, `I`, `T`, `b` para bools).
-- En el Core: namespace `Periapsis::Core`, tipos sin prefijo (`Vec3`, `StateVector`) para no
-  chocar con los de UE (`FVector3d`). PascalCase igual que UE.
-- Nada de `PI`, `check`, `verify`, `ensure` como identificadores: son macros de UE.
-- Sin excepciones ni RTTI en el Core (UE compila sin ellas).
-- Sombrear variables es error en UE; el CMake de los tests lo replica (`/w14456...`, `-Wshadow`).
+- Outside the Core: Unreal prefixes (`A`, `U`, `F`, `E`, `I`, `T`, `b` for bools).
+- In the Core: namespace `Periapsis::Core`, unprefixed types (`Vec3`, `StateVector`) so they
+  don't clash with Unreal's (`FVector3d`). PascalCase like Unreal.
+- Never use `PI`, `check`, `verify` or `ensure` as identifiers: they are Unreal macros.
+- No exceptions or RTTI in the Core (Unreal builds without them).
+- Shadowing variables is an error in Unreal; the test CMake replicates it (`/w14456...`,
+  `-Wshadow`).
 
-## Comandos
+## Commands
 
-Tests del Core (sin UE, ~1 s). `cmake` no está en el PATH: el script usa el que trae
-Visual Studio Build Tools 2022.
+Core tests (no Unreal, ~1 s). `cmake` is not on the PATH: the script uses the one bundled
+with Visual Studio Build Tools 2022.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File Scripts/run-core-tests.ps1
 ```
 
-Compilar el editor (~4,5 min la primera vez, segundos después) y correr los tests de
-integración (Automation, prefijo `Periapsis.`). UE 5.8.3 está en `H:\Epic Games\UE_5.8`.
-El resultado de los tests queda en `Saved/Logs/Periapsis.log`; buscar `Test Completed`.
+Build the editor (~4.5 min the first time, seconds afterwards) and run the integration tests
+(Automation, prefix `Periapsis.`). UE 5.8.3 is in `H:\Epic Games\UE_5.8`. Test results end up
+in `Saved/Logs/Periapsis.log`; search for `Test Completed`.
 
 ```bat
 "H:\Epic Games\UE_5.8\Engine\Build\BatchFiles\Build.bat" PeriapsisEditor Win64 Development -Project="%CD%\Periapsis.uproject" -WaitMutex
 "H:\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "%CD%\Periapsis.uproject" -ExecCmds="Automation RunTests Periapsis; Quit" -unattended -nopause -NullRHI -nosplash
 ```
 
-No compilar mientras el editor está abierto: Live Coding bloquea el build.
+Don't build while the editor or the game is open: Live Coding and the loaded DLLs block the
+build.
 
-CI (`.github/workflows/core-tests.yml`) corre los tests del Core en Windows y Linux.
+CI (`.github/workflows/core-tests.yml`) runs the Core tests on Windows and Linux.
 
-## Definición de "hecho"
+## Definition of done
 
-Compila, tests verdes, sin advertencias nuevas, datos validados. Todo lo medible
-(órbitas, delta-v, conversiones, cargas) se convierte en test.
+It builds, tests are green, no new warnings, data is validated. Everything measurable
+(orbits, delta-v, conversions, loads) becomes a test.
 
-## Límites del agente
+## Agent limits
 
-No ve el viewport. Lo visual lo valida una persona: el agente deja líneas y texto de
-depuración y logs claros. El ensamblado de niveles, materiales y Niagara lo hace una persona.
+The agent doesn't see the viewport. Visuals are validated by a person: the agent leaves debug
+lines and text and clear logs. Level assembly, materials and Niagara are done by a person.
 
-## Estado
+## Status
 
-- M0: estructura, módulos, CI y este archivo. El editor compila sin warnings con UE 5.8.3,
-  carga los 4 módulos y pasa los tests Automation `Periapsis.Sim.*`. El entorno y las
-  cachés se describen en `Docs/adr/0001-arranque.md`.
-- M1: Core orbital completo con tests (`Tools/CoreTests`).
-- M2: prototipo orbital jugable (detalle en `Docs/adr/0002-prototipo-orbital.md`). Lo
-  automático está verde: el test `Periapsis.Sim.Mission.TransferToTheMoon` vuela la
-  transferencia a la luna con warp 100.000x. Se probó jugando el 2026-10-15: entre 135 y
-  165 FPS y la transferencia a la luna hecha a mano (detalle en el ADR). Los controles se
-  ven en pantalla (F1).
+- M0: structure, modules, CI and this file. The editor builds without warnings on UE 5.8.3,
+  loads the 4 modules and passes the `Periapsis.Sim.*` Automation tests. The environment and
+  caches are described in `Docs/adr/0001-bootstrap.md`.
+- M1: complete orbital Core with tests (`Tools/CoreTests`).
+- M2: playable orbital prototype (details in `Docs/adr/0002-orbital-prototype.md`). The
+  automated part is green: the `Periapsis.Sim.Mission.TransferToTheMoon` test flies the
+  transfer to the moon at 100,000x warp. Play-tested on 2026-10-15: 135 to 165 FPS and the
+  transfer to the moon flown by hand (details in the ADR). Controls are shown on screen (F1).
