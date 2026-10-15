@@ -1,0 +1,18 @@
+{
+	"_comment": "M2 prototype: a point ship in a circular parking orbit, with enough delta-v to reach the moon and come back.",
+	"system": "bodies/home_system.json",
+	"start_time_s": 0,
+	"ship": {
+		"name": "Prototype",
+		"dry_mass_kg": 4000,
+		"fuel_mass_kg": 8000,
+		"thrust_n": 60000,
+		"isp_s": 350
+	},
+	"start_orbit": {
+		"body": "home",
+		"altitude_m": 100000,
+		"inclination_deg": 0.0,
+		"true_anomaly_deg": 0.0
+	}
+}

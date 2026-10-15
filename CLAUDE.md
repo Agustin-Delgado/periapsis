@@ -67,3 +67,8 @@ depuración y logs claros. El ensamblado de niveles, materiales y Niagara lo hac
   carga los 4 módulos y pasa los tests Automation `Periapsis.Sim.*`. El entorno y las
   cachés se describen en `Docs/adr/0001-arranque.md`.
 - M1: Core orbital completo con tests (`Tools/CoreTests`).
+- M2: prototipo orbital jugable (detalle en `Docs/adr/0002-prototipo-orbital.md`). Lo
+  automático está verde: el test `Periapsis.Sim.Mission.TransferToTheMoon` vuela la
+  transferencia a la luna con warp 100.000x. Se probó jugando el 2026-10-15: entre 135 y
+  165 FPS y la transferencia a la luna hecha a mano (detalle en el ADR). Los controles se
+  ven en pantalla (F1).

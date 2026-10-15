@@ -160,15 +160,47 @@ namespace Periapsis::Core
 			const bool bClosed = SpecificEnergy(CurrentState, Mu) < 0.0;
 			const double Period = OrbitalPeriod(Patch.Elements, Mu);
 
+			// Around the root body (no SOI to leave), no event can happen while the ship is
+			// beyond every child's reach and the surface. Out there the search takes long
+			// steps: sampling evenly cost a second per prediction on escape or near-escape
+			// orbits, and the game predicts every frame while the engine burns.
+			const bool bRoot = !std::isfinite(B.SphereOfInfluence);
+			double Reach = B.Radius;
+			for (const int Child : System.Children(CurrentBody))
+			{
+				const CelestialBody& C = System.Body(Child);
+				Reach = std::max(Reach, ApoapsisRadius(C.Orbit) + C.SphereOfInfluence);
+			}
+			// Speed bound beyond the reach, from energy conservation.
+			const double MaxSpeedBeyondReach = std::sqrt(std::max(2.0 * SpecificEnergy(CurrentState, Mu) + 2.0 * Mu / Reach, 0.0));
+
 			// Search window: a few revolutions if closed, up to the SOI if open.
 			double WindowEnd = AbsoluteEnd;
+			// Events are only searched up to here; past it, none can happen on this conic.
+			double SearchEnd = AbsoluteEnd;
 			if (bClosed)
 			{
 				WindowEnd = std::min(WindowEnd, PatchStart + Settings.OrbitsPerPatch * Period);
+				SearchEnd = WindowEnd;
 			}
-			else if (!std::isfinite(B.SphereOfInfluence))
+			else if (bRoot)
 			{
 				WindowEnd = std::min(WindowEnd, PatchStart + Settings.OpenOrbitSpan);
+				// Escaping: once the ship flies outward beyond the reach, it never comes back.
+				const auto IsPastReach = [&](const StateVector& S)
+				{
+					return Norm(S.Position) > Reach && Dot(S.Position, S.Velocity) > 0.0;
+				};
+				double Probe = 0.0;
+				if (!IsPastReach(CurrentState))
+				{
+					Probe = std::max(Norm(CurrentState.Position) / Norm(CurrentState.Velocity), 1.0);
+					for (int Doubling = 0; Doubling < 200 && !IsPastReach(PropagateKepler(CurrentState, Mu, Probe)); ++Doubling)
+					{
+						Probe *= 2.0;
+					}
+				}
+				SearchEnd = std::min(WindowEnd, PatchStart + Probe);
 			}
 			else
 			{
@@ -183,9 +215,10 @@ namespace Periapsis::Core
 					Probe *= 2.0;
 				}
 				WindowEnd = std::min(WindowEnd, PatchStart + Probe);
+				SearchEnd = WindowEnd;
 			}
 
-			const double Span = WindowEnd - PatchStart;
+			const double Span = SearchEnd - PatchStart;
 			const int Samples = std::max(Settings.SamplesPerOrbit, 8);
 			double Step = bClosed ? Period / Samples : Span / (4.0 * Samples);
 			for (const int Child : System.Children(CurrentBody))
@@ -216,7 +249,13 @@ namespace Periapsis::Core
 
 			for (int K = 1; K <= kMaxSamplesPerPatch + 1; ++K)
 			{
-				const double Time = std::min(PatchStart + K * Step, WindowEnd);
+				double Advance = Step;
+				if (bRoot && MaxSpeedBeyondReach > 0.0)
+				{
+					const double Radius = Norm(Events.ShipAt(TimePrev1).Position);
+					Advance = std::max(Advance, (Radius - Reach) / MaxSpeedBeyondReach);
+				}
+				const double Time = std::min(TimePrev1 + Advance, SearchEnd);
 				for (size_t J = 0; J < EventCount; ++J)
 				{
 					Now[J] = Events.Evaluate(J, Time);
@@ -246,7 +285,7 @@ namespace Periapsis::Core
 						EventIndex = static_cast<int>(J);
 					}
 				}
-				if (EventIndex >= 0 || Time >= WindowEnd)
+				if (EventIndex >= 0 || Time >= SearchEnd)
 				{
 					break;
 				}

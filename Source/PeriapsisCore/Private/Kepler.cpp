@@ -12,12 +12,18 @@ namespace Periapsis::Core
 		constexpr double kEpsilon = std::numeric_limits<double>::epsilon();
 
 		// Safeguarded Newton for monotonically increasing functions: Newton steps,
-		// falling back to bisection whenever a step leaves the bracket. Always converges
-		// as long as F(Lo) < 0 <= F(Hi); NaN evaluations are treated as "above".
+		// falling back to bisection whenever a step leaves the bracket or shrinks too
+		// slowly. Always converges as long as F(Lo) < 0 <= F(Hi); NaN evaluations are
+		// treated as "above".
 		template <typename FunctionAndDerivative>
 		double SolveMonotonic(FunctionAndDerivative&& Eval, double Lo, double Hi, double Guess)
 		{
 			double X = (Guess > Lo && Guess < Hi) ? Guess : 0.5 * (Lo + Hi);
+			// Far down a hyperbola the function grows exponentially and Newton crawls
+			// toward the root by a constant amount per step: bisect unless each step is
+			// at most half the one before last (as in Numerical Recipes' rtsafe).
+			double StepBeforeLast = Hi - Lo;
+			double LastStep = Hi - Lo;
 			for (int Iteration = 0; Iteration < 200; ++Iteration)
 			{
 				double Derivative = 0.0;
@@ -36,10 +42,12 @@ namespace Periapsis::Core
 				}
 
 				double Next = X - Value / Derivative;
-				if (!std::isfinite(Next) || Next <= Lo || Next >= Hi)
+				if (!std::isfinite(Next) || Next <= Lo || Next >= Hi || std::fabs(Next - X) > 0.5 * std::fabs(StepBeforeLast))
 				{
 					Next = 0.5 * (Lo + Hi);
 				}
+				StepBeforeLast = LastStep;
+				LastStep = Next - X;
 
 				const double Tolerance = 2.0 * kEpsilon * std::fmax(1.0, std::fabs(Next));
 				if (std::fabs(Next - X) <= Tolerance || (Hi - Lo) <= Tolerance)

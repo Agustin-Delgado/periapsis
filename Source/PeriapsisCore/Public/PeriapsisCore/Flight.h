@@ -1,0 +1,107 @@
+// Pure C++: no Unreal headers allowed in this module (see CLAUDE.md).
+#pragma once
+
+#include "PeriapsisCore/Api.h"
+
+#include "PeriapsisCore/CelestialSystem.h"
+#include "PeriapsisCore/PatchedConics.h"
+
+#include <vector>
+
+namespace Periapsis::Core
+{
+	// A point ship with a single engine (M2). Parts and stages replace this in M5.
+	struct ShipConfig
+	{
+		double DryMass = 0.0;    // kg
+		double FuelMass = 0.0;   // kg, at the start
+		double Thrust = 0.0;     // N, vacuum
+		double IspSeconds = 0.0; // s, vacuum
+	};
+
+	enum class FlightStatus
+	{
+		Flying,
+		Crashed,
+	};
+
+	// Where the engine points, relative to the orbit around the current body.
+	enum class AttitudeMode
+	{
+		Prograde,
+		Retrograde,
+		Normal,
+		AntiNormal,
+		RadialOut,
+		RadialIn,
+	};
+
+	PERIAPSISCORE_API Vec3 AttitudeDirection(AttitudeMode Mode, const StateVector& State);
+
+	// Re-expresses a state relative to an adjacent body in the hierarchy (parent or child).
+	PERIAPSISCORE_API StateVector ChangeFrame(const CelestialSystem& System, int FromBody, int ToBody,
+		const StateVector& State, double UniversalTime);
+
+	// The flight of one ship through the system.
+	//
+	// Coasting is on rails: the state is evaluated on the predicted conic patches, which is
+	// exact at any time warp (no energy drift, no skipped encounters). Thrusting leaves the
+	// rails and integrates gravity plus thrust with RK4 in fixed sub-steps; afterwards the
+	// trajectory is predicted again from the new state.
+	class Flight
+	{
+	public:
+		// Integration step while thrusting, in seconds of simulation time.
+		static constexpr double kPoweredStep = 1.0 / 120.0;
+
+		PERIAPSISCORE_API Flight(const CelestialSystem& InSystem, const ShipConfig& InConfig, int InBodyIndex,
+			const StateVector& InState, double InTime, const PredictionSettings& InPrediction = {});
+
+		PERIAPSISCORE_API void SetThrottle(double InThrottle);
+		double Throttle() const { return ThrottleValue; }
+
+		// Engine direction in the inertial frame of the current body. Normalized internally.
+		PERIAPSISCORE_API void SetThrustDirection(const Vec3& Direction);
+		const Vec3& ThrustDirection() const { return Direction; }
+
+		PERIAPSISCORE_API void Advance(double DeltaTime);
+
+		double Time() const { return CurrentTime; }
+		int BodyIndex() const { return CurrentBody; }
+		const StateVector& State() const { return CurrentState; } // relative to BodyIndex()
+		double Fuel() const { return FuelLeft; }
+		double Mass() const { return Config.DryMass + FuelLeft; }
+		FlightStatus Status() const { return CurrentStatus; }
+		const ShipConfig& Ship() const { return Config; }
+		const CelestialSystem& System() const { return SystemRef; }
+
+		bool IsThrusting() const { return CurrentStatus == FlightStatus::Flying && ThrottleValue > 0.0 && FuelLeft > 0.0; }
+		PERIAPSISCORE_API double RemainingDeltaV() const;
+
+		// Predicted conics from the current time on. Recomputed only when the ship has
+		// thrusted or left the patches computed before.
+		PERIAPSISCORE_API const std::vector<TrajectoryPatch>& Trajectory();
+
+	private:
+		void Coast(double TargetTime);
+		void Thrust(double TargetTime);
+		void Predict();
+		bool CheckSoiTransition();
+
+		const CelestialSystem& SystemRef;
+		ShipConfig Config;
+		PredictionSettings Prediction;
+
+		int CurrentBody;
+		StateVector CurrentState;
+		double CurrentTime;
+		double FuelLeft;
+		double ThrottleValue = 0.0;
+		Vec3 Direction{1.0, 0.0, 0.0};
+		FlightStatus CurrentStatus = FlightStatus::Flying;
+
+		std::vector<TrajectoryPatch> Patches;
+		size_t PatchIndex = 0;
+		bool bPatchesValid = false;
+	};
+}

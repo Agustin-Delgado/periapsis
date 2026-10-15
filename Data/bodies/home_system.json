@@ -1,0 +1,31 @@
+{
+	"_comment": "Reduced-scale home system (spec 6.2). mu = surface gravity * radius^2. Orbits relative to the parent, angles in degrees, epoch in seconds of universal time.",
+	"bodies": [
+		{
+			"id": "home",
+			"name": "Home",
+			"radius_m": 1000000,
+			"surface_gravity_m_s2": 9.81,
+			"rotation_period_s": 21600,
+			"display_color": [0.18, 0.36, 0.62]
+		},
+		{
+			"id": "moon",
+			"name": "Moon",
+			"parent": "home",
+			"radius_m": 200000,
+			"surface_gravity_m_s2": 1.63,
+			"rotation_period_s": 83400,
+			"display_color": [0.55, 0.55, 0.52],
+			"orbit": {
+				"semi_major_axis_m": 12000000,
+				"eccentricity": 0.0,
+				"inclination_deg": 0.0,
+				"longitude_of_ascending_node_deg": 0.0,
+				"argument_of_periapsis_deg": 0.0,
+				"mean_anomaly_at_epoch_deg": 90.0,
+				"epoch_s": 0
+			}
+		}
+	]
+}
