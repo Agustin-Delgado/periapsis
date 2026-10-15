@@ -1,0 +1,19 @@
+# Unreal
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+Build/
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+*.sln
+*.suo
+*.VC.db
+*.opendb
+.vs/
+.idea/
+.vscode/
+
+# Core tests (CMake)
+build/
+out/

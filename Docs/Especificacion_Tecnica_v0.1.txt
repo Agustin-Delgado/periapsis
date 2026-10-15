@@ -1,0 +1,973 @@
+Especificación técnica
+Simulador espacial de construcción de cohetes y exploración orbital
+Unreal Engine 5 · C++ · Windows
+
+Documento Versión Fecha Proyecto Estado
+
+Especificación técnica (referencia para iniciar el desarrollo) 0.1 – borrador 14 de octubre de 2026 Nombre pendiente (en este documento: PROYECTO) Antes de escribir código: decisiones abiertas listadas en la sección 16
+
+Este documento reúne las decisiones de motor, arquitectura, física, datos, gameplay, progresión, gráficos, hitos y riesgos discutidas hasta ahora, más recomendaciones nuevas para cubrir las lagunas. Las cifras marcadas como «a validar» son estimaciones iniciales que deben confirmarse con prototipos.
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+Contenido
+
+1. Resumen ejecutivo
+
+4
+
+1.1 Pilares de diseño . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+
+1.2 Alcance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+
+1.3 Principios de ingeniería . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 4
+
+1.4 Propiedad intelectual . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 5
+
+2. Stack y decisiones técnicas
+
+5
+
+3. Arquitectura general
+
+6
+
+3.1 Capas y dependencias . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+
+3.2 Módulos de UE . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+
+3.3 Dos regímenes de simulación . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+
+3.4 Unidades y marcos de referencia . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 6
+
+3.5 Origen flotante . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+
+3.6 Tiempo . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+
+4. Mecánica orbital (módulo Core)
+
+7
+
+4.1 Representación . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+
+4.2 Propagación en rieles . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+
+4.3 Esferas de influencia y trayectoria predicha . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 7
+
+4.4 Maniobras . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+
+4.5 Delta-v por etapa . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+
+4.6 Integración numérica . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+
+4.7 Planificación avanzada (después del MVP) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+
+4.8 N-cuerpos como mejora opcional . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+
+4.9 Requisitos de precisión y pruebas . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 8
+
+5. Simulación de naves
+
+9
+
+5.1 Modelo de datos . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+
+5.2 Representación física (decisión clave) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+
+5.3 Masa e inercia . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+
+5.4 Propulsión y recursos . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+
+5.5 Etapas y desacoplamiento . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+
+5.6 Control de actitud . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 9
+
+5.7 Aerodinámica . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+
+5.8 Calentamiento . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+
+5.9 Colisiones y daño . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+
+5.10 Aterrizaje y reposo . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+
+6. Cuerpos celestes, terreno y atmósfera
+
+10
+
+6.1 Definición de cuerpos . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 10
+
+6.2 Escala del sistema (palanca de diseño) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+
+6.3 Terreno esférico . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+
+6.4 Atmósfera, cielo y océanos . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+
+Página 2
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+6.5 Render de cuerpos lejanos . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+
+7. Datos y contenido
+
+11
+
+7.1 Esquema de parte . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 11
+
+7.2 Reglas de datos . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+7.3 Contenido mínimo para la v1.0 (propuesta) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+8. Gameplay y experiencia de usuario
+
+12
+
+8.1 Escenas . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+8.2 Constructor . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+8.3 Vuelo . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+8.4 Mapa orbital . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 12
+
+8.5 Accesibilidad y localización . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+
+9. Progresión, campaña e historia
+
+13
+
+9.1 Modos de juego . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+
+9.2 Sistemas de progresión . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+
+9.3 Historia . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 13
+
+9.4 Sistema de eventos y misiones . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+
+10. Gráficos y audio
+
+14
+
+10.1 Presupuestos de rendimiento (a validar) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 14
+
+11. Rendimiento y escalabilidad
+
+14
+
+12. Repositorio y flujo de trabajo con Claude Code
+
+15
+
+12.1 Estructura de carpetas . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+
+12.2 Contenido recomendado de CLAUDE.md . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+
+12.3 Comandos de referencia (ajustar rutas y versión) . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+
+12.4 Trabajo con un agente que no ve el viewport . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+
+12.5 Git y CI . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 15
+
+13. Preparación del entorno (checklist)
+
+16
+
+14. Hitos y criterios de aceptación
+
+16
+
+15. Riesgos y mitigaciones
+
+17
+
+16. Decisiones abiertas y primeros pasos
+
+17
+
+16.1 Decisiones abiertas . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 17
+
+16.2 Primer día de trabajo . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+
+Apéndice A. Fórmulas de referencia
+
+18
+
+Apéndice B. Glosario
+
+18
+
+Apéndice C. Lecturas y documentación a consultar
+
+19
+
+Página 3
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+1. Resumen ejecutivo
+Objetivo. Construir un simulador espacial de construcción de cohetes y exploración orbital, en 3D, sobre Unreal Engine 5, dentro del género que popularizó Kerbal Space Program (KSP): ensamblar naves con partes, lanzarlas, hacer maniobras orbitales y explorar un sistema planetario. El proyecto tendrá universo, arte, nombres y narrativa propios y busca mejorar al género en cuatro frentes: física, gráficos, historia y progresión.
+
+1.1 Pilares de diseño
+• Física creíble y estable. Mecánica orbital precisa, naves sin el clásico «Kraken» (explosiones o temblores por articulaciones inestables), aerodinámica y calentamiento más realistas.
+• Construcción libre con información útil. Constructor por nodos con delta-v, TWR y estabilidad calculados en vivo.
+• Progresión con decisiones que importan. Investigación, presupuesto, reputación, personal y riesgo de falla.
+• Historia emergente. Una campaña con hitos, descubrimientos y una agencia rival que reacciona al avance del jugador.
+• Presentación visual de alto nivel. Atmósferas dispersivas, nubes volumétricas, iluminación global y efectos de motor y reentrada.
+
+1.2 Alcance
+Dentro de la v1.0
+Sistema planetario propio (estrella, planeta natal, luna, al menos 3 a 5 cuerpos más) Constructor de cohetes por partes, etapas, simetría Vuelo con física, atmósfera, reentrada, aterrizaje
+Mapa orbital con nodos de maniobra y predicción de trayectorias Campaña con árbol tecnológico, presupuesto, contratos, personal e historia Modo sandbox con todo desbloqueado
+
+Fuera de la v1.0 (diseñar para poder agregarlo, no implementarlo) Multijugador
+VR Soporte de mods y workshop (dejar datos abiertos para habilitarlo luego) Colonias, bases y producción industrial
+Consolas
+Vehículos con partes flexibles/blandas (cables, cuerdas)
+
+1.3 Principios de ingeniería
+• C++ primero. Blueprints solo para pegamento fino (UI, materiales). Los Blueprints y otros assets binarios de UE no se pueden editar bien desde un agente ni revisar en Git.
+• Data-driven. Partes, cuerpos celestes, tecnología y misiones viven en archivos JSON/CSV versionados.
+• Núcleo testeable sin el editor. La matemática orbital es C++ puro con tests que corren en segundos y también en CI.
+• SI y doble precisión. Metros, kilogramos, segundos, double. La conversión a unidades de UE (centímetros) ocurre solo en la frontera con el motor.
+• Hitos jugables. Cada hito termina en algo que se puede probar y mostrar.
+
+Página 4
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+1.4 Propiedad intelectual
+Las mecánicas de un género no están protegidas, pero sí los nombres, personajes, arte, audio, código y assets de KSP. El proyecto debe usar nombres, especie, personajes, partes, interfaz y banda sonora originales. Antes de comercializar conviene validarlo con un profesional legal (este documento no es asesoramiento legal). Además, todo asset de terceros (Fab/Marketplace, audio, fuentes) debe tener licencia compatible con uso comercial.
+
+2. Stack y decisiones técnicas
+
+Resultado de la comparación Godot / Unity / Unreal: se elige Unreal Engine 5 por su techo gráfico (Lumen, Nanite, Sky Atmosphere, nubes volumétricas) y por las coordenadas de mundo de doble precisión. El costo asumido es trabajar casi todo en C++ y aceptar proyectos más pesados.
+
+Decisión Motor
+Lenguaje Física de cuerpos rígidos Mecánica orbital Escala del mundo
+Datos
+Terreno planetario
+Atmósfera y cielo
+
+Elección Unreal Engine 5.x (última versión estable al arrancar; fijar la versión en el .uproject) C++ (Blueprints solo para UI y materiales) Chaos (incluido en UE)
+Solver propio en C++ (módulo Core) Large World Coordinates (doble precisión) + rebasing de origen JSON/CSV en Git, importados a DataTables o cargados en runtime Cubo-esfera con quadtree LOD, malla generada en runtime Sky Atmosphere + Volumetric Clouds
+
+Efectos UI
+Entrada Audio Plataforma inicial Control de versiones
+
+Niagara UMG/Slate dirigido desde C++ (CommonUI opcional) Enhanced Input MetaSounds Windows PC Git + Git LFS
+
+Tests
+Compilación Agente de código
+
+doctest o Catch2 (Core, fuera del editor) + UE Automation Framework (integración)
+Visual Studio 2022 (o Rider) + Unreal Build Tool
+Claude Code en Windows nativo
+
+Motivo / nota No actualizar de versión a mitad de un hito.
+Editable por agente, revisable en Git. Un cuerpo compuesto por nave, ver sección 5.
+Independiente del motor, doble precisión. No asumir doble precisión en toda la cadena física; verificar en M3. Revisión y diffs sencillos.
+Nanite no sirve para malla generada en runtime.
+Un solo Sky Atmosphere activo (verificar), sección 6. Plumas de motor, reentrada, separaciones. Localización con FText.
+Teclado, mouse y gamepad. Sonido dependiente de la densidad atmosférica. Otras plataformas después. Binarios (.uasset, .umap, texturas, mallas) por LFS. El Core se prueba en CI sin instalar UE.
+Live Coding para iterar. Unreal corre en Windows; WSL2 solo para tooling auxiliar.
+
+Página 5
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+3. Arquitectura general
+
+3.1 Capas y dependencias
+
++---------------------------------------------------------------+
+
+| PRESENTACIÓN UI (UMG), cámaras, VFX (Niagara), audio
+
+|
+
++---------------------------------------------------------------+
+
+| GAMEPLAY
+
+Constructor, vuelo, mapa, campaña, contratos |
+
++---------------------------------------------------------------+
+
+| SIMULACIÓN
+
+Universo, Vessel, física local, recursos,
+
+|
+
+|
+
+aerodinámica, calor, estructura
+
+|
+
++---------------------------------------------------------------+
+
+| CORE (C++ puro, sin headers de UE) órbitas, integradores,
+
+|
+
+|
+
+unidades, utilidades matemáticas
+
+|
+
++---------------------------------------------------------------+
+
+Regla: cada capa solo depende de las que tiene debajo.
+
+3.2 Módulos de UE
+
+Módulo PROYECTOCore PROYECTOSim PROYECTOGame
+
+Contenido
+Matemática orbital, Kepler, SOI, maniobras, integradores, conversión de unidades
+Estado del universo, cuerpos, naves (Vessel), partes, recursos, tiempo, guardado
+Actores, controladores, UI, cámaras, terreno, VFX, campaña
+
+PROYECTOEditor Tools/CoreTests
+
+Herramientas de editor, validadores de datos, importadores Proyecto CMake con tests del Core, corre fuera de UE y en CI
+
+Dependencias Ninguna (C++ estándar)
+Core
+Core, Sim, Engine Game, UnrealEd Core
+
+3.3 Dos regímenes de simulación
+Como en KSP, no todo se simula con física. Las naves lejanas se propagan con ecuaciones orbitales («en rieles») y solo las cercanas a la nave activa entran en la «burbuja física».
+
+Método
+
+En rieles (on-rails) Solución analítica de Kepler, sin integración
+
+Cuándo
+
+Naves lejanas, naves sin empuje a gran distancia, planetas y lunas
+
+Time warp Costo Estado persistido
+
+Hasta 100.000x Despreciable, miles de naves Elementos keplerianos y época
+
+Burbuja física
+Chaos + fuerzas propias (gravedad, empuje, aerodinámica)
+Nave activa y las que estén dentro del radio de la burbuja (inicial: 2,5 km al entrar, 2,2 km al salir; a validar)
+Hasta 4x (con sub-pasos)
+Alto, pocas naves
+Posición/velocidad en el marco local
+
+La transición convierte posición y velocidad a elementos keplerianos (al salir) o los evalúa para obtener un estado cartesiano (al entrar). Se añade histéresis para evitar entrar y salir repetidamente. Una nave en el suelo se persiste con latitud, longitud, altitud y orientación y se «congela» cuando Chaos la duerme.
+
+3.4 Unidades y marcos de referencia
+• Unidades de simulación: metros, kilogramos, segundos, newtons, double. UE usa centímetros: la conversión vive en una única clase de frontera (por ejemplo FUnitBridge) y nunca se mezclan unidades en el resto del código.
+• Marcos: (a) universal/raíz inercial; (b) inercial centrado en un cuerpo; (c) fijo al cuerpo (rota con el planeta); (d) local de física, con origen en la nave activa.
+
+Página 6
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+• Decisión abierta con recomendación: dentro de la burbuja y por debajo de una «altitud de marco rotante» (por cuerpo), simular en el marco fijo al cuerpo aplicando fuerzas ficticias (centrífuga y Coriolis); por encima, en marco inercial. Simplifica el aterrizaje. Validar en M3.
+3.5 Origen flotante
+La nave activa se mantiene cerca del origen físico. Cuando se aleja más de un umbral (inicial: 5 km, parametrizable) se desplaza todo el mundo local para recentrarla. UE ofrece World Origin Rebasing y las Large World Coordinates del lado del render, pero no se debe asumir doble precisión en toda la cadena de física: la regla es mantener la escena de Chaos siempre cerca del origen. Verificar en el prototipo M3.
+3.6 Tiempo
+• Tiempo universal UT en double segundos, fuente única de verdad para órbitas, eventos de campaña y guardado.
+• Pasos de física fijos (60 a 120 Hz) con física asíncrona y sub-stepping de Chaos habilitados; la lógica de simulación usa pasos fijos para ser reproducible.
+• Niveles de warp en rieles: 1x, 5x, 10x, 50x, 100x, 1.000x, 10.000x, 100.000x (a validar). El warp se limita automáticamente al entrar en atmósfera o cerca de un cuerpo (según altitud).
+4. Mecánica orbital (módulo Core)
+4.1 Representación
+La fuente de verdad de una nave es el vector de estado (posición y velocidad relativas al cuerpo dominante, con época). Los elementos keplerianos (semieje mayor a, excentricidad e, inclinación i, longitud del nodo ascendente, argumento del periapsis, anomalía media y época) se derivan cuando hacen falta (dibujar la órbita, mostrar Ap/Pe). Esto evita las singularidades de los elementos clásicos en órbitas circulares (e = 0) o ecuatoriales (i = 0).
+4.2 Propagación en rieles
+• Resolver la ecuación de Kepler con Newton-Raphson con buen valor inicial y respaldo por bisección; usar la forma hiperbólica para e mayor que 1 y manejar el caso casi parabólico.
+• Considerar el formalismo de variables universales para tratar elípticas, parabólicas e hiperbólicas con el mismo código.
+• Los planetas y lunas siguen órbitas keplerianas fijas (efemérides del sistema definidas en datos).
+4.3 Esferas de influencia y trayectoria predicha
+• Aproximación de cónicas empalmadas (patched conics): cada cuerpo tiene una esfera de influencia (radio inicial por la fórmula de Laplace, con opción de valor manual en datos).
+• Predicción: encadenar segmentos cónicos hasta N parches (inicial 5), detectando entradas y salidas de esferas por búsqueda de raíces sobre la trayectoria. El estado se transforma entre marcos al cruzar la frontera.
+• La predicción se calcula en un hilo aparte y se invalida cuando cambia el empuje o un nodo de maniobra.
+
+Página 7
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+4.4 Maniobras
+• Un nodo de maniobra es (UT, delta-v prograde, normal, radial) en el marco orbital local. • La órbita resultante se recalcula al instante y se dibuja en el mapa. • Tiempo de quemado estimado con la ecuación del cohete y los datos de etapas; la quema se centra en el
+nodo (la mitad antes, la mitad después) con aviso al jugador.
+4.5 Delta-v por etapa
+El delta-v de cada etapa se calcula con la ecuación del cohete, dv = Isp · g0 · ln(m0 / m1), considerando Isp en vacío o a presión ambiente, el orden de consumo de recursos y el flujo de combustible entre tanques. Esto alimenta el constructor y el HUD.
+4.6 Integración numérica
+• Cuando hay empuje o arrastre atmosférico la nave sale de rieles y se integra numéricamente (Velocity Verlet o RK4 con sub-pasos; opcional paso adaptativo tipo Dormand-Prince).
+• Al terminar la perturbación, el estado se convierte a elementos y vuelve a rieles. • La gravedad se evalúa en doble precisión y por separado de Chaos, que recibe la fuerza resultante.
+4.7 Planificación avanzada (después del MVP)
+• Solver de Lambert para transferencias entre cuerpos y gráficos tipo porkchop. • Asistente de ventanas de lanzamiento y de transferencia, con sugerencias de maniobras.
+4.8 N-cuerpos como mejora opcional
+Mejora propuesta sobre KSP: un modo de alta fidelidad en el que la trayectoria predicha de la nave incluye la gravedad de varios cuerpos cercanos (planetas siguen en rieles y se usan como efemérides). Riesgos: pérdida de estabilidad en warp alto y deriva de energía. Por eso no se aplica a los planetas, solo a la nave, y se publica como opción tras el MVP (ver decisión abierta 5).
+4.9 Requisitos de precisión y pruebas
+• Conversión estado a elementos y de vuelta: error relativo menor que 1e-9 en la biblioteca de casos. • Deriva relativa de energía y momento angular menor que 1e-9 tras 1.000 órbitas en rieles (casi precisión de
+máquina). • Casos de referencia: órbita baja, transferencia geoestacionaria, transferencia a la luna, sobrevuelo
+hiperbólico, casi parabólica, retrógrada, circular, ecuatorial. • Pruebas de propiedades con órbitas aleatorias y comparación contra soluciones analíticas. • Estos tests corren en CI sin UE (Tools/CoreTests).
+
+Página 8
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+5. Simulación de naves
+
+5.1 Modelo de datos
+Una Vessel es un grafo de partes (árbol con raíz, simetrías y refuerzos opcionales). Cada parte declara masa seca, nodos de unión, formas de colisión, recursos y una lista de módulos (motor, tanque, desacoplador, paracaídas, rueda de reacción, panel solar, batería, experimento, tren de aterrizaje, etc.).
+
+5.2 Representación física (decisión clave)
+Recomendación: cada nave es un único cuerpo rígido compuesto en Chaos (múltiples formas de colisión, masa e inercia agregadas) más un modelo estructural lógico. Cada unión tiene resistencia (fuerza y momento máximos). En cada paso se calculan las cargas sobre cada unión a partir de aceleración, masa aguas abajo y momentos. Si se supera el límite, la unión se rompe y la nave se divide en dos cuerpos.
+
+Enfoque Cuerpo compuesto + estructura lógica (recomendado)
+Una articulación (constraint) de Chaos por unión Híbrido (futuro)
+
+Ventajas
+
+Desventajas
+
+Elimina el «Kraken» de las articulaciones físicas, bajo costo, determinista, escala a cientos de partes
+
+Sin flexión visible; hay que escribir el cálculo de cargas
+
+Flexión y rotura «naturales»
+
+Inestable con muchas partes y masas dispares, costoso, difícil de ajustar
+
+Uniones marcadas como flexibles (largueros, Más complejidad; hacerlo solo si el diseño lo
+
+paneles, patas) con constraints; el resto,
+
+pide
+
+compuesto
+
+5.3 Masa e inercia
+Al consumirse combustible cambian la masa, el centro de masa y el tensor de inercia. Se recalculan en el solver propio y se actualizan en Chaos cada cierto intervalo o cuando el cambio supera un umbral.
+5.4 Propulsión y recursos
+• Empuje y Isp interpolados entre vacío y nivel del mar según la presión ambiente; caudal másico mdot = F / (Isp · g0).
+• Control de aceleración (throttle), vectorización de empuje (gimbal), encendido y reencendido, fallas de ignición opcionales.
+• Recursos como datos (combustible, oxidante, monopropelente, carga eléctrica, etc.) con un grafo de flujo configurable: prioridad de tanques, flujo cruzado, tanques en serie o paralelo.
+5.5 Etapas y desacoplamiento
+• Lista de etapas editable en el constructor y durante el vuelo. • El desacoplador aplica un impulso de separación y crea una nueva nave; carenados y escombros como
+entidades baratas con tiempo de vida.
+5.6 Control de actitud
+• SAS con modos (mantener actitud, prograde, retrograde, normal, radial, hacia el nodo). • Controlador PID con límites de par de ruedas de reacción y RCS. • Piloto automático para mantener una actitud durante una quema (opcional).
+
+Página 9
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+5.7 Aerodinámica
+• Densidad por cuerpo mediante curva o tabla en datos, con modelo exponencial rho(h) = rho0 · exp(-h / H) como respaldo.
+• Arrastre por parte: Fd = 0,5 · rho · v2 · Cd · A, con Cd y área efectiva por cara y ángulo de ataque, y con oclusión (las partes tapadas no aportan).
+• Superficies de sustentación y centro de presión; el constructor muestra centro de masa y de presión para anticipar la estabilidad.
+• Mejora a evaluar (fase 2): arrastre derivado de una voxelización simple de la silueta y curva dependiente del número de Mach.
+5.8 Calentamiento
+• Flujo de calor estimado con una relación tipo Sutton-Graves, q = k · sqrt(rho / Rn) · v3, con Rn el radio de nariz efectivo.
+• Temperatura por parte con capacidad térmica, conducción básica entre partes unidas y disipación. • Escudos térmicos y ablativos como módulos; si una parte supera su temperatura máxima, falla o explota. • Efecto visual de plasma ligado al flujo de calor (Niagara).
+5.9 Colisiones y daño
+Cada parte tiene umbrales de velocidad de impacto y de carga; al superarse se destruye o se desprende. Los resultados quedan registrados para la telemetría del jugador.
+5.10 Aterrizaje y reposo
+• Patas con suspensión (resorte-amortiguador) y fricción parametrizable por material de terreno. • Detección de reposo: al cumplir criterios durante un tiempo, la nave se duerme y pasa a un estado «posada»
+barato, evitando temblores indefinidos.
+6. Cuerpos celestes, terreno y atmósfera
+6.1 Definición de cuerpos
+Todos los cuerpos se describen en datos. Ejemplo (valores ilustrativos, a ajustar):
+{ "id": "home_planet", "parent": "star", "radius_m": 1000000, "mu_m3_s2": 9.81e12, "rotation_period_s": 21600, "orbit": { "a_m": 1.0e11, "e": 0.0, "i_deg": 0, "lan_deg": 0, "argp_deg": 0, "m0_deg": 0, "epoch_s": 0 }, "atmosphere": { "height_m": 70000, "scale_height_m": 5600, "density_curve": "curves/home_density.csv", "sky": "sky/home_sky.json" }, "terrain": { "seed": 1337, "sea_level_m": 0, "profile": "terrain/home.json" }, "soi_m": null
+}
+
+Página 10
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+6.2 Escala del sistema (palanca de diseño)
+Un sistema a escala real hace los ascensos largos y tediosos. Se propone un planeta natal reducido y ajustable por datos. Valor inicial sugerido (a validar): radio 1.000 km y gravedad superficial 9,81 m/s2, con lo que la velocidad circular a nivel del mar es sqrt(g · R), aproximadamente 3,13 km/s, y el delta-v a órbita baja queda alrededor de 4,0 a 4,3 km/s contando pérdidas. Se ajusta en el prototipo M2 hasta que el ascenso se sienta bien.
+6.3 Terreno esférico
+• Estructura: cubo-esfera (6 caras) con quadtree por cara. Cada nodo es un bloque de malla (por ejemplo 33×33 o 65×65 vértices). LOD por error en pantalla o distancia, con costuras o morphing (referencia: CDLOD).
+• Generación: alturas por ruido (fBm, ridged, dominios warpeados) más mapas de altura dibujados a mano para sitios especiales. Se generan en hilos de trabajo y se cachean.
+• Render: malla generada en runtime (Nanite no aplica). Para el prototipo sirve ProceduralMeshComponent; evaluar un componente de malla en tiempo real más eficiente para producción.
+• Colisión: solo en un radio alrededor de las naves en la burbuja, con malla de colisión de resolución mayor cocinada de forma asíncrona. Respaldo: consulta analítica de altura (función de terreno) para contacto de bajo nivel y para no depender del cocinado.
+• Materiales: mezcla por pendiente, altitud y bioma; triplanar y detalle cercano; Runtime Virtual Texturing si hace falta.
+6.4 Atmósfera, cielo y océanos
+• Sky Atmosphere con parámetros por cuerpo tomados de datos. UE admite un solo Sky Atmosphere activo por nivel (verificar en la versión elegida): se reconfigura al cambiar el cuerpo activo y los demás se muestran con impostores.
+• Volumetric Clouds y niebla atmosférica; transición suave del cielo al espacio.
+• Océanos: esfera con shader propio (olas por mapas de normales, espuma, profundidad); colisión como altitud 0 al principio. El sistema Water de UE no está pensado para escala planetaria.
+• Estrellas y Sol: mapa de estrellas HDR, luz direccional con intensidad realista, sombras y eclipses entre cuerpos.
+6.5 Render de cuerpos lejanos
+Los cuerpos lejanos se dibujan como esferas o impostores con tamaño angular preservado y distancia limitada («espacio escalado»), para evitar problemas de precisión del depth buffer. Cuando un cuerpo pasa a ser el activo, se reemplaza por el terreno y la atmósfera completos.
+7. Datos y contenido
+7.1 Esquema de parte
+{ "id": "engine_small_01", "category": "engine", "dry_mass_kg": 450, "cost": 1200, "tech_required": "propulsion_basic", "attach_nodes": [ { "id": "top", "pos": [0, 0, 0.6], "dir": [0, 0, 1], "size": 1 }, { "id": "bottom", "pos": [0, 0, -0.6], "dir": [0, 0, -1], "size": 1 } ], "joint_strength": { "force_n": 60000, "torque_nm": 30000 },
+
+Página 11
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+"max_temp_k": 2000, "modules": [
+{ "type": "Engine", "thrust_vac_n": 60000, "isp_vac_s": 310, "isp_sl_s": 265, "propellants": ["fuel", "oxidizer"], "gimbal_deg": 2 }
+] }
+
+7.2 Reglas de datos
+• IDs estables y únicos (nunca reutilizar); las referencias entre datos son por ID. • Validación con JSON Schema y un test que carga todo el contenido y verifica referencias cruzadas. • Recarga en caliente en el editor para ajustar partes y balance sin reiniciar. • Guardados versionados con migraciones explícitas entre versiones. • Textos por clave de localización (es/en desde el inicio) y no cadenas incrustadas en código.
+
+7.3 Contenido mínimo para la v1.0 (propuesta)
+
+Categoría
+
+Cantidad inicial
+
+Nota
+
+Cuerpos celestes Partes
+Nodos de tecnología Experimentos
+
+6a8 80 a 120
+30 a 40 15 a 25
+
+Estrella, planeta natal, luna, 3 a 5 cuerpos más, de distintos tipos Cápsulas, tanques, motores, desacopladores, estructura, aerodinámica, energía, ciencia, aterrizaje Con 3 a 5 partes por nodo Por bioma y situación
+
+Contratos plantilla
+
+20 a 30
+
+Más contratos narrativos hechos a mano
+
+8. Gameplay y experiencia de usuario
+8.1 Escenas
+Centro de control (hub), Constructor, Vuelo, Mapa orbital (superpuesto al vuelo), Estación de seguimiento (naves, contratos y eventos) y menús.
+8.2 Constructor
+• Ensamblado por nodos con simetría radial y espejo; ayudas de alineación y rotación por pasos. • Mejora sobre KSP: delta-v, TWR, masa y costo por etapa en tiempo real, con valores en vacío y a nivel del
+mar; centro de masa y de presión visibles; avisos de diseño (inestable, sin control, sin energía). • Guardado y carga de diseños (JSON), subensamblajes reutilizables, estimación de costo y de riesgo.
+8.3 Vuelo
+• HUD con navball, altitud, velocidad, TWR, recursos, etapa actual y avisos. • Cámaras: persecución, libre y de piloto (futuro). • Guardado rápido y carga rápida; revertir al lanzamiento o al hangar (según reglas del modo).
+8.4 Mapa orbital
+• Órbitas, apoapsis y periapsis, marcadores de encuentro, transiciones de SOI, nodos de maniobra editables. • Control de time warp con límites automáticos y avisos de seguridad.
+
+Página 12
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+8.5 Accesibilidad y localización
+• Remapeo completo de controles; soporte de gamepad; escala de UI y modo de alto contraste. • Localización es/en desde el primer día (FText, tablas de cadenas).
+9. Progresión, campaña e historia
+
+9.1 Modos de juego
+• Sandbox: todo desbloqueado, sin presupuesto. • Campaña: progresión, economía, contratos e historia. • Ciencia (opcional): árbol tecnológico y ciencia, sin economía ni historia.
+
+9.2 Sistemas de progresión
+
+Sistema Árbol tecnológico Ciencia Presupuesto
+Reputación Personal Instalaciones Fiabilidad
+
+Descripción
+
+Mejora sobre KSP
+
+Nodos con costo en puntos de investigación y
+
+Ramas con compromisos (especializarse),
+
+prerequisitos; cada nodo desbloquea partes y capacidades no solo comprar todo
+
+Experimentos por bioma y situación, con retorno decreciente y transmisión o recuperación
+
+Datos que alimentan también descubrimientos de la historia
+
+Fondos por contratos y logros; costo de partes y de lanzamiento; recuperación de partes según distancia al centro de lanzamiento
+
+Presupuesto anual y financiamiento con condiciones
+
+Sube con logros y cumplimiento; baja con fallas y contratos incumplidos
+
+Afecta contratos y ofertas disponibles
+
+Tripulantes con experiencia, entrenamiento y riesgo real de pérdida
+
+Carreras y decisiones de riesgo con consecuencias narrativas
+
+Edificios mejorables que amplían límites de masa, partes y Mejoras con tiempo de construcción funciones
+
+Cada parte gana fiabilidad con el uso; las nuevas pueden Decisiones de riesgo reales (probar antes
+
+fallar más
+
+de comprometerse)
+
+9.3 Historia
+KSP casi no tiene historia: este es un diferencial claro. La propuesta es una narrativa emergente y ligada al progreso técnico, sin cinemáticas largas, con cuatro ingredientes:
+• Actos ligados a hitos de jugabilidad (I: suborbital y órbita; II: la luna; III: el sistema interior; IV: el sistema exterior y el final). Los títulos y el tono son provisionales.
+• Descubrimientos por exploración: señales, estructuras y mensajes que aparecen al llegar a lugares concretos o al reunir cierta ciencia.
+• Agencia rival con una línea de tiempo que reacciona al avance del jugador (carreras, sabotajes diplomáticos, colaboraciones).
+• Contratos narrativos con ramas y consecuencias sobre reputación, financiamiento y tecnología. Entregable pendiente: una «biblia narrativa» aparte (ambientación, especie, tono, cronología de eventos, personajes). Hasta definirla, el sistema de eventos se implementa sin contenido final.
+
+Página 13
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+9.4 Sistema de eventos y misiones
+Máquina de eventos dirigida por datos: condiciones (nave en órbita de un cuerpo, ciencia acumulada, tecnología desbloqueada, tiempo universal, reputación mínima) que disparan acciones (desbloquear tecnología, crear contrato, mostrar diálogo, cambiar el estado de la agencia rival, guardar un marcador de historia). Facilita iterar la narrativa sin tocar C++.
+
+10. Gráficos y audio
+• Iluminación: Lumen para iluminación global y reflejos; Virtual Shadow Maps; exposición automática con límites pensados para espacio; luz solar y sombras de cuerpos.
+• Atmósfera y nubes: Sky Atmosphere y Volumetric Clouds; transición espacio-atmósfera cuidada. • Partes: mallas estáticas con PBR y Nanite donde aplique; materiales con desgaste y brillo emisivo por
+temperatura. • VFX (Niagara): plumas de motor que cambian de forma con la presión ambiental, plasma de reentrada,
+chispas de separación, polvo al aterrizar. • Postproceso: bloom, destello de lente, HDR y gradación de color coherentes con el arte propio. • Audio: MetaSounds; el sonido de motores y viento depende de la densidad atmosférica y de la cámara;
+música dinámica ligada a eventos de campaña.
+
+10.1 Presupuestos de rendimiento (a validar)
+Escenario Vuelo con nave de hasta 200 partes en GPU de gama media Terreno planetario visible, cielo y nubes
+Simulación y física
+Predicción de trayectoria
+
+Objetivo
+60 FPS a 1440p
+Menos de 6 ms de GPU para terreno y atmósfera
+Menos de 4 ms de CPU por cuadro en la nave activa
+En hilo aparte, sin bloquear el hilo de juego
+
+11. Rendimiento y escalabilidad
+• Física: una sola entidad física por nave, formas de colisión simplificadas por parte. • Render de partes: Nanite, instancias y fusión de mallas estáticas; LOD en partes complejas. • Terreno: generación y cocinado de colisión en hilos de trabajo, con cola priorizada por cercanía. • Muchas naves: las que están en rieles solo cuestan una evaluación analítica por consulta. • Perfilado desde M2: Unreal Insights, stat unit, stat game; revisión de presupuestos en cada hito.
+
+Página 14
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+12. Repositorio y flujo de trabajo con Claude Code
+
+12.1 Estructura de carpetas
+
+PROYECTO/ CLAUDE.md PROYECTO.uproject Config/ Content/ Data/ Source/ PROYECTOCore/ PROYECTOSim/ PROYECTOGame/ PROYECTOEditor/ Tools/ CoreTests/ Scripts/ Docs/ .github/workflows/
+
+reglas del proyecto para el agente
+assets de UE (mínimos; lo posible va en Data/) JSON/CSV: bodies/, parts/, tech/, events/, contracts/
+C++ puro (órbitas, integradores, unidades) estado del universo, naves, recursos actores, UI, terreno, VFX, campaña herramientas de editor
+CMake + doctest/Catch2 (corre sin UE) scripts de datos, validadores especificación, decisiones (ADR), biblia narrativa CI (tests del Core)
+
+12.2 Contenido recomendado de CLAUDE.md
+• Reglas: C++ primero; no editar .uasset, .umap ni otros binarios; datos en Data/; unidades SI y double; conversión solo en la frontera; el Core no incluye headers de UE.
+• Cómo compilar, probar y ejecutar (comandos de abajo, ajustando rutas). • Convenciones de nombres de UE (prefijos A, U, F, E, I, T), estilo de commits y de ramas. • Definición de «hecho» por tarea: compila, tests verdes, sin advertencias nuevas, datos validados. • Límites del agente: no ve el viewport; las verificaciones visuales las hace el humano.
+12.3 Comandos de referencia (ajustar rutas y versión)
+:: Compilar el editor (Windows) "C:\Program Files\Epic Games\UE_5.x\Engine\Build\BatchFiles\Build.bat" ^
+PROYECTOEditor Win64 Development -Project="C:\ruta\PROYECTO.uproject" -WaitMutex
+:: Tests del Core (sin UE) cmake -S Tools/CoreTests -B build/coretests cmake --build build/coretests --config Release ctest --test-dir build/coretests -C Release --output-on-failure
+:: Tests de integración con Automation (sin render) "C:\...\UnrealEditor-Cmd.exe" "C:\ruta\PROYECTO.uproject" ^
+-ExecCmds="Automation RunTests PROYECTO; Quit" -unattended -nopause -NullRHI -log
+12.4 Trabajo con un agente que no ve el viewport
+• Todo lo medible se convierte en test: órbitas, delta-v, conversiones, cargas estructurales. • Visualización de depuración (líneas, texto) y logs claros para que el humano valide rápido lo visual. • Capturas automáticas por escenario para revisión humana en cada hito. • El ensamblado visual (niveles, materiales, Niagara) lo hace el humano; el agente prepara código y datos.
+Como opción, el scripting de editor con Python permite automatizar creación de assets.
+12.5 Git y CI
+• Git LFS para binarios; .gitignore con Binaries, Intermediate, Saved, DerivedDataCache y .vs. • CI mínimo: compilar y ejecutar los tests del Core en cada push (no requiere instalar UE). • Ramas cortas por hito y revisión de cada cambio; ADRs para decisiones arquitectónicas.
+
+Página 15
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+13. Preparación del entorno (checklist)
+
+Paso 1. Hardware
+2. Unreal Engine
+3. Visual Studio 2022
+4. Git y Git LFS 5. Claude Code
+6. Proyecto 7. Ajustes 8. Módulos
+9. CI y CLAUDE.md
+
+Detalle
+SSD con 150 GB libres o más (motor, DDC y proyecto), 32 GB de RAM recomendados, GPU con soporte DX12 reciente
+Instalar desde Epic Games Launcher la última versión 5.x estable; fijar la versión; build de código fuente solo si hay que modificar el motor
+Workload «Desarrollo de juegos con C++», SDK de Windows y el toolset MSVC que indique la documentación de UE para la versión elegida
+Repositorio con .gitattributes para LFS
+Instalado en Windows nativo y abierto sobre la carpeta del proyecto; WSL2 queda para tooling auxiliar
+Nuevo proyecto C++ en blanco, sin starter content, ray tracing por hardware desactivado al inicio
+Activar sub-stepping y física asíncrona; revisar Large World Coordinates; fijar tamaño de paso
+Crear PROYECTOCore, PROYECTOSim, PROYECTOGame y PROYECTOEditor; configurar Tools/CoreTests
+Workflow de tests del Core y archivo CLAUDE.md con las reglas de la sección 12
+
+14. Hitos y criterios de aceptación
+
+Esfuerzo orientativo para una persona trabajando con un agente de código: S días, M 1 a 2 semanas, L 3 a 6 semanas, XL más de 2 meses. Son estimaciones iniciales, a revisar al cerrar M2.
+
+Hito
+
+Entregable
+
+M0 Fundaciones
+
+Repo, proyecto UE C++, módulos, CI, CLAUDE.md
+
+M1 Núcleo orbital
+
+Kepler elíptico e hiperbólico, estado/elementos, propagación, SOI, nodos, ecuación del cohete
+
+M2 Prototipo orbital
+
+Planeta esfera, nave punto con empuje, órbita dibujada, warp en rieles, mapa básico
+
+M3 Burbuja física
+
+Transición rieles-física, origen flotante, marco local
+
+M4 Terreno esférico Cubo-esfera con LOD, colisión local, aterrizaje
+
+M5 Naves con partes
+
+Constructor, partes, tanques, motores, etapas, estructura lógica, delta-v
+
+M6 Atmósfera y reentrada
+
+Densidad, arrastre, calentamiento, paracaídas, Sky Atmosphere
+
+M7 Mapa y planificación
+
+Mapa completo, nodos, marcadores de encuentro, transiciones de SOI en UI
+
+M8 Sistema completo
+
+6 a 8 cuerpos en datos, SOI múltiples, ajustes de escala
+
+M9 Campaña
+
+Árbol tecnológico, presupuesto, contratos, personal, guardado versionado
+
+Criterios de aceptación
+
+Esf.
+
+Compila en Win64 Development; ctest verde en CI
+
+S
+
+Suite de referencia en verde; conversión ida y vuelta
+
+M
+
+menor que 1e-9; deriva de energía menor que 1e-9 en
+
+1.000 órbitas
+
+Órbita estable y transferencia a una luna con warp
+
+M
+
+100.000x sin saltos visibles; 60 FPS
+
+Nave a 1.000 km del origen sin temblor visible;
+
+L
+
+discontinuidad de velocidad menor que 1e-3 m/s en
+
+transición
+
+Descenso de órbita a superficie sin popping evidente; 60 L FPS; la nave se duerme en reposo sin temblar
+
+Cohete de 3 etapas y 50 o más partes con delta-v y TWR XL dentro de 1% del cálculo analítico
+
+Ascenso a órbita con giro gravitacional jugable; reentrada L con calentamiento y aterrizaje con paracaídas
+Planificar y ejecutar una transferencia a la luna solo con M la UI
+
+Viaje a un planeta exterior con ventanas de transferencia L razonables
+Partida de campaña completa desde cero hasta el primer XL hito de historia, con guardado y carga
+
+Página 16
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+Hito
+
+Entregable
+
+Criterios de aceptación
+
+Esf.
+
+M10 Historia y
+
+Eventos, diálogos,
+
+Campaña completable de principio a fin
+
+XL
+
+contenido
+
+descubrimientos, agencia rival,
+
+contenido final
+
+M11 Pulido y
+
+Rendimiento, arte, audio,
+
+Presupuestos de rendimiento cumplidos; ronda de
+
+XL
+
+lanzamiento
+
+localización, QA, estrategia de
+
+playtests externos
+
+Early Access
+
+15. Riesgos y mitigaciones
+
+Riesgo
+Alcance excesivo (paridad total con KSP)
+Precisión numérica y temblores
+Inestabilidad de física de naves (Kraken)
+Terreno LOD complejo (costuras, colisión, streaming)
+Rendimiento con muchas partes
+Assets binarios que el agente no puede editar
+Tiempos de compilación e iteración en UE
+Propiedad intelectual
+
+Prob. Alta Media Alta Alta Media Alta Media Baja
+
+Cambios de versión de UE Proyecto largo y dispersión
+
+Media Media
+
+Impacto Alto
+Alto Alto
+Medio-alto
+Medio Medio
+Bajo-medio
+Alto
+Medio Alto
+
+Mitigación
+Trabajar por pilares; congelar alcance por hito; demos jugables
+SI y doble precisión; origen flotante; M3 temprano; tests
+Cuerpo compuesto y estructura lógica; sub-stepping; límites de carga
+Prototipo aislado en M4; CDLOD; respaldo con altura analítica
+Nanite, instancias, presupuestos y perfilado desde M2
+Datos en JSON/CSV; C++ primero; scripting de editor con Python
+Live Coding; módulos pequeños; Core probado fuera del editor
+Universo y assets propios; licencias claras; revisión legal antes de publicar
+Fijar versión; actualizar solo entre hitos y con tests
+Hitos pequeños, demos frecuentes, priorizar la diversión del núcleo
+
+16. Decisiones abiertas y primeros pasos
+
+16.1 Decisiones abiertas
+# Decisión 1 Nombre, ambientación y tono del universo 2 Escala del sistema (radio del planeta natal) 3 Marco de referencia de la física 4 Estructura de nave 5 ¿N-cuerpos en la v1.0? 6 Plataformas y requisitos mínimos de
+hardware 7 Modelo de negocio
+8 Versión exacta de UE 9 Idiomas
+
+Recomendación actual Definir antes de M9; no bloquea M0 a M8 1.000 km y 9,81 m/s2 como punto de partida; ajustar en M2 Rotante cerca de superficie, inercial en altura; validar en M3 Cuerpo compuesto + estructura lógica; híbrido más adelante si hace falta No; opción de alta fidelidad después del MVP Windows PC; fijar un perfil mínimo tras M4
+Early Access o pago único; impacta licencias (regalía del 5% sobre el primer millón de USD de ingresos brutos por producto en UE) Última 5.x estable al empezar; fijar en el .uproject Español e inglés desde el inicio
+
+Página 17
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+16.2 Primer día de trabajo
+• Instalar UE y Visual Studio 2022, crear el repositorio y el proyecto C++ en blanco.
+• Escribir el CLAUDE.md con las reglas de la sección 12 y colocar este documento en Docs/.
+• Abrir Claude Code en la carpeta del proyecto y pedirle M0 y luego M1.
+Texto sugerido para el primer pedido a Claude Code:
+Lee CLAUDE.md y Docs/ (especificación técnica v0.1). Ejecuta el hito M0: crea los módulos PROYECTOCore, PROYECTOSim y PROYECTOGame, el proyecto Tools/CoreTests con CMake y doctest, y un workflow de CI que ejecute los tests del Core. Luego ejecuta el hito M1: implementa en PROYECTOCore el solver de Kepler (elíptico e hiperbólico), conversión entre vector de estado y elementos, propagación, esfera de influencia y la ecuación del cohete, con tests de referencia y criterios de precisión de la sección 4.9. No edites binarios de Unreal. Informa qué comandos ejecutaste y los resultados.
+
+Apéndice A. Fórmulas de referencia
+
+Ecuación del cohete: Caudal másico: Vis-viva: Velocidad circular: Periodo (elíptica): Kepler (e < 1): Kepler (e > 1): Esfera de influencia: Hohmann (r1 -> r2):
+Arrastre: Densidad (simple): Flujo de calor: Relación empuje/peso:
+
+dv = Isp * g0 * ln(m0 / m1)
+
+g0 = 9.80665 m/s^2
+
+mdot = F / (Isp * g0)
+
+v^2 = mu * (2/r - 1/a)
+
+v_c = sqrt(mu / r)
+
+Velocidad de escape: v_e = sqrt(2*mu / r)
+
+T = 2*pi*sqrt(a^3 / mu)
+
+M = E - e*sin(E)
+
+M = n*(t - t0), n = sqrt(mu / a^3)
+
+M = e*sinh(H) - H
+
+r_SOI = a * (m / M)^(2/5)
+
+(m: cuerpo, M: cuerpo padre)
+
+dv1 = sqrt(mu/r1) * (sqrt(2*r2/(r1+r2)) - 1)
+
+dv2 = sqrt(mu/r2) * (1 - sqrt(2*r1/(r1+r2)))
+
+F_d = 0.5 * rho * v^2 * Cd * A
+
+rho(h) = rho0 * exp(-h / H)
+
+H: altura de escala
+
+q = k * sqrt(rho / Rn) * v^3
+
+(Sutton-Graves, estimación)
+
+TWR = F / (m * g_local)
+
+Apéndice B. Glosario
+
+Término On-rails / en rieles Burbuja física SOI Patched conics Delta-v TWR Isp Kraken Origen flotante LOD LWC ADR
+
+Significado Nave propagada con ecuaciones orbitales, sin física Región alrededor de la nave activa donde las naves se simulan con Chaos Esfera de influencia gravitatoria de un cuerpo Aproximación que une trayectorias cónicas entre esferas de influencia Cambio total de velocidad que puede lograr una nave Relación empuje/peso Impulso específico, eficiencia del motor Fallas de simulación por articulaciones o colisiones inestables Técnica de recentrar el mundo para evitar pérdida de precisión Nivel de detalle que cambia según la distancia o el tamaño en pantalla Large World Coordinates, coordenadas de mundo de doble precisión en UE5 Registro de decisión arquitectónica
+
+Página 18
+
+Especificación técnica – Simulador espacial (UE5)
+
+v0.1 · borrador
+
+Apéndice C. Lecturas y documentación a consultar
+• H. Curtis, Orbital Mechanics for Engineering Students. • R. Bate, D. Mueller, J. White, Fundamentals of Astrodynamics. • D. Vallado, Fundamentals of Astrodynamics and Applications. • F. Strugar, Continuous Distance-Dependent Level of Detail for Rendering Heightmaps (CDLOD). • Documentación oficial de Unreal Engine: Large World Coordinates, Chaos Physics (sub-stepping y física
+asíncrona), Sky Atmosphere, Volumetric Clouds, Niagara, Enhanced Input, Automation Testing Framework, Live Coding. • Verificar ediciones y versiones al momento de usarlas, ya que la documentación del motor cambia entre versiones.
+
+Página 19
+
+
