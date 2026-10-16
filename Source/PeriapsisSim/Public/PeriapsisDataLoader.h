@@ -18,6 +18,15 @@ struct FPeriapsisSystemData
 	TArray<FPeriapsisBodyInfo> Bodies; // same indices as System
 };
 
+// A vessel with no engine sharing the scenario with the ship (debris, a station).
+struct FPeriapsisPassiveVessel
+{
+	FString Name;
+	double Mass = 0.0; // kg
+	int32 StartBody = Periapsis::Core::kNoBody;
+	Periapsis::Core::StateVector StartState; // relative to StartBody
+};
+
 struct FPeriapsisScenario
 {
 	FPeriapsisSystemData SystemData;
@@ -26,6 +35,7 @@ struct FPeriapsisScenario
 	int32 StartBody = Periapsis::Core::kNoBody;
 	Periapsis::Core::StateVector StartState; // relative to StartBody
 	double StartTime = 0.0;
+	TArray<FPeriapsisPassiveVessel> OtherVessels;
 };
 
 // Reads and validates the JSON files under Data/. Every function returns false and fills

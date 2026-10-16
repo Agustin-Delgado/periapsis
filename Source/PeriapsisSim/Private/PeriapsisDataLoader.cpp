@@ -42,6 +42,39 @@ namespace
 			OutErrors.Add(FString::Printf(TEXT("%s: '%s' must be positive (got %g)"), *Where, Field, Value));
 		}
 	}
+
+	// A circular orbit: body, altitude, inclination and true anomaly at the scenario start.
+	void ParseStartOrbit(const FJsonObject& O, const FString& Where, const FPeriapsisSystemData& SystemData, double StartTime,
+		int32& OutBody, StateVector& OutState, TArray<FString>& OutErrors)
+	{
+		FString BodyId;
+		double Altitude = 0.0, Inclination = 0.0, TrueAnomaly = 0.0;
+		O.TryGetStringField(TEXT("body"), BodyId);
+		ReadNumber(O, TEXT("altitude_m"), Where, Altitude, OutErrors);
+		O.TryGetNumberField(TEXT("inclination_deg"), Inclination);
+		O.TryGetNumberField(TEXT("true_anomaly_deg"), TrueAnomaly);
+
+		OutBody = SystemData.Bodies.IndexOfByPredicate([&](const FPeriapsisBodyInfo& B) { return B.Id == BodyId; });
+		if (OutBody == INDEX_NONE)
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: unknown body '%s'"), *Where, *BodyId));
+			OutBody = kNoBody;
+			return;
+		}
+		const CelestialBody& Body = SystemData.System.Body(OutBody);
+		const double Radius = Body.Radius + Altitude;
+		RequirePositive(Altitude, TEXT("altitude_m"), Where, OutErrors);
+		if (Radius >= Body.SphereOfInfluence)
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: altitude is outside the body's sphere of influence"), *Where));
+		}
+		OrbitalElements Circular;
+		Circular.SemiLatusRectum = Radius;
+		Circular.Inclination = DegToRad(Inclination);
+		Circular.TrueAnomaly = DegToRad(TrueAnomaly);
+		Circular.Epoch = StartTime;
+		OutState = ElementsToState(Circular, Body.Mu);
+	}
 }
 
 FString PeriapsisData::DataDirectory()
@@ -253,35 +286,38 @@ bool PeriapsisData::ParseScenario(const FString& Json, const FString& DataRoot, 
 		OutErrors.Add(TEXT("scenario: missing 'start_orbit'"));
 		return false;
 	}
-	const FJsonObject& O = **OrbitObject;
-	FString BodyId;
-	double Altitude = 0.0, Inclination = 0.0, TrueAnomaly = 0.0;
-	O.TryGetStringField(TEXT("body"), BodyId);
-	ReadNumber(O, TEXT("altitude_m"), TEXT("start_orbit"), Altitude, OutErrors);
-	O.TryGetNumberField(TEXT("inclination_deg"), Inclination);
-	O.TryGetNumberField(TEXT("true_anomaly_deg"), TrueAnomaly);
+	ParseStartOrbit(**OrbitObject, TEXT("start_orbit"), Result.SystemData, Result.StartTime, Result.StartBody, Result.StartState, OutErrors);
 
-	Result.StartBody = Result.SystemData.Bodies.IndexOfByPredicate([&](const FPeriapsisBodyInfo& B) { return B.Id == BodyId; });
-	if (Result.StartBody == INDEX_NONE)
+	const TArray<TSharedPtr<FJsonValue>>* Others = nullptr;
+	if (Root->TryGetArrayField(TEXT("other_vessels"), Others))
 	{
-		OutErrors.Add(FString::Printf(TEXT("start_orbit: unknown body '%s'"), *BodyId));
-		Result.StartBody = kNoBody;
-	}
-	else
-	{
-		const CelestialBody& Body = Result.SystemData.System.Body(Result.StartBody);
-		const double Radius = Body.Radius + Altitude;
-		RequirePositive(Altitude, TEXT("altitude_m"), TEXT("start_orbit"), OutErrors);
-		if (Radius >= Body.SphereOfInfluence)
+		for (int32 Index = 0; Index < Others->Num(); ++Index)
 		{
-			OutErrors.Add(TEXT("start_orbit: altitude is outside the body's sphere of influence"));
+			const FString Where = FString::Printf(TEXT("other_vessels[%d]"), Index);
+			const TSharedPtr<FJsonObject>* VesselObject = nullptr;
+			if (!(*Others)[Index]->TryGetObject(VesselObject))
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: must be an object"), *Where));
+				continue;
+			}
+			const FJsonObject& V = **VesselObject;
+			FPeriapsisPassiveVessel Vessel;
+			if (!V.TryGetStringField(TEXT("name"), Vessel.Name) || Vessel.Name.IsEmpty())
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: missing 'name'"), *Where));
+			}
+			ReadNumber(V, TEXT("mass_kg"), Where, Vessel.Mass, OutErrors);
+			RequirePositive(Vessel.Mass, TEXT("mass_kg"), Where, OutErrors);
+			const TSharedPtr<FJsonObject>* VesselOrbit = nullptr;
+			if (!V.TryGetObjectField(TEXT("start_orbit"), VesselOrbit))
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: missing 'start_orbit'"), *Where));
+				continue;
+			}
+			ParseStartOrbit(**VesselOrbit, Where + TEXT(".start_orbit"), Result.SystemData, Result.StartTime, Vessel.StartBody,
+				Vessel.StartState, OutErrors);
+			Result.OtherVessels.Add(MoveTemp(Vessel));
 		}
-		OrbitalElements Circular;
-		Circular.SemiLatusRectum = Radius;
-		Circular.Inclination = DegToRad(Inclination);
-		Circular.TrueAnomaly = DegToRad(TrueAnomaly);
-		Circular.Epoch = Result.StartTime;
-		Result.StartState = ElementsToState(Circular, Body.Mu);
 	}
 
 	if (OutErrors.Num() > ErrorsBefore)

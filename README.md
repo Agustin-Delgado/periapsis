@@ -7,9 +7,10 @@ spirit of Kerbal Space Program. The orbital mechanics run in SI units and double
 Coasting is analytic ("on rails") and powered flight is integrated. Trajectories are
 predicted with patched conics across spheres of influence.
 
-**Status:** M2 of 12, a playable orbital prototype. You fly a point ship around a planet,
-burn to change the orbit, time-warp up to 100,000x and reach the moon. There is no rocket
-building yet. See [Roadmap](#roadmap).
+**Status:** M3 of 12. You fly a ship around a planet, burn to change the orbit, time-warp up
+to 100,000x and reach the moon. Near the ship, up to 4x warp, vessels are simulated by Chaos
+in a physics bubble with a floating origin; a spent stage flies 1.5 km ahead of you at the
+start. There is no rocket building yet. See [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -53,16 +54,17 @@ You can also run it as a standalone window:
 | `Shift` / `Ctrl` | Throttle up / down |
 | `Z` / `X` | Full throttle / cut engine |
 | `1`–`6` | Hold prograde, retrograde, normal, anti-normal, radial out, radial in |
-| `.` / `,` | Time warp up / down (at most 4x while the engine burns) |
+| `.` / `,` | Time warp up / down (at most 4x while the engine burns; above 4x the physics bubble switches off) |
 | `/` | Back to 1x |
 | Right mouse drag | Rotate the camera |
 | Mouse wheel | Zoom |
-| `Tab` | Cycle the camera focus (ship, planet, moon) |
+| `Tab` | Cycle the camera focus (ship, spent stage, planet, moon) |
 | `R` | Restart the scenario |
 | `F1` | Show / hide help |
 
 The HUD shows the current orbit (Ap, Pe, eccentricity, inclination, period) and the
-remaining delta-v. It also names the next sphere-of-influence change. Type
+remaining delta-v. It also names the next sphere-of-influence change, shows whether the
+physics bubble is on and how far the other vessels are. Type
 `` ` `` then `stat fps` to see the frame rate.
 
 ### Try it: a transfer to the moon
@@ -101,11 +103,12 @@ powershell -ExecutionPolicy Bypass -File Scripts/run-core-tests.ps1
 ```
 
 They cover Kepler solvers, universal-variable propagation, state ↔ elements conversion,
-maneuvers, patched-conic prediction and powered flight. CI runs them on Windows and Linux on
-every push.
+maneuvers, patched-conic prediction, powered flight and the physics bubble's local frame. CI
+runs them on Windows and Linux on every push.
 
 Integration tests use Unreal's Automation framework (prefix `Periapsis.`). They include a
-full moon transfer flown at 100,000x warp and a Play-In-Editor smoke test:
+full moon transfer flown at 100,000x warp, rails/physics transitions, and Play-In-Editor tests
+that fly the bubble in Chaos:
 
 ```bat
 "<UE_5.8>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "%CD%\Periapsis.uproject" -ExecCmds="Automation RunTests Periapsis; Quit" -unattended -nopause -NullRHI -nosplash
@@ -120,7 +123,7 @@ The full plan is in the [technical specification](Docs/TechnicalSpecification_v0
 - [x] **M0** Project structure, modules, CI
 - [x] **M1** Orbital Core with tests
 - [x] **M2** Spherical planet, point ship with thrust, drawn orbits, warp on rails, basic map
-- [ ] **M3** Physics bubble: rails-to-physics transition, floating origin, local frame
+- [x] **M3** Physics bubble: rails-to-physics transition, floating origin, local frame
 - [ ] **M4** Spherical terrain: cube-sphere with LOD, local collision, landing
 - [ ] **M5** Ships made of parts: builder, parts, tanks, engines, stages, logical structure, delta-v
 - [ ] **M6** Atmosphere and reentry: density, drag, heating, parachutes, Sky Atmosphere

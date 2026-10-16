@@ -81,9 +81,7 @@ That test found three bugs, now fixed and covered by tests:
 
 ## Pending or to review
 
-- **Axis handedness:** the Core uses right-handed axes and `FUnitBridge` copies X, Y and Z as
-  they are into Unreal's left-handed system. On screen, prograde orbits look clockwise from
-  +Z. Decide before M3 whether `FUnitBridge` flips Y.
+- **Axis handedness:** resolved in ADR 0003: `FUnitBridge` mirrors Y.
 - **Prediction with the engine on:** it is recomputed every frame. With the engine on, the
   game thread takes 4 to 7 ms; without it, 3 to 4 ms. If it grows (more bodies), move it to a
   worker thread (`PredictTrajectory` only reads) or limit it to about 10 Hz.

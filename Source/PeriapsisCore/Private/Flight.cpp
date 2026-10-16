@@ -90,6 +90,62 @@ namespace Periapsis::Core
 		}
 	}
 
+	void Flight::SetPhysicsState(int InBodyIndex, const StateVector& InState, double InTime)
+	{
+		if (CurrentStatus != FlightStatus::Flying)
+		{
+			return;
+		}
+		CurrentBody = InBodyIndex;
+		CurrentState = InState;
+		CurrentTime = InTime;
+
+		if (Norm(CurrentState.Position) <= SystemRef.Body(CurrentBody).Radius)
+		{
+			CurrentStatus = FlightStatus::Crashed;
+			ThrottleValue = 0.0;
+			Patches.clear();
+			bPatchesValid = false;
+			return;
+		}
+		CheckSoiTransition();
+		if (!MatchesPrediction())
+		{
+			Patches.clear();
+			bPatchesValid = false;
+		}
+	}
+
+	bool Flight::MatchesPrediction() const
+	{
+		if (!bPatchesValid || Patches.empty())
+		{
+			return false;
+		}
+		const TrajectoryPatch& Patch = Patches.front();
+		if (Patch.BodyIndex != CurrentBody || CurrentTime < Patch.StartTime || CurrentTime > Patch.EndTime)
+		{
+			return false;
+		}
+		const StateVector Expected = PropagateKepler(Patch.StartState, SystemRef.Body(CurrentBody).Mu, CurrentTime - Patch.StartTime);
+		return Norm(CurrentState.Position - Expected.Position) < kPredictionMatchPosition
+			&& Norm(CurrentState.Velocity - Expected.Velocity) < kPredictionMatchVelocity;
+	}
+
+	double Flight::BurnFor(double DeltaTime)
+	{
+		if (!IsThrusting() || !(DeltaTime > 0.0))
+		{
+			return 0.0;
+		}
+		const double Flow = MassFlowRate(Config.Thrust, Config.IspSeconds) * ThrottleValue;
+		const double StartMass = Mass();
+		FuelLeft = std::max(0.0, FuelLeft - Flow * DeltaTime);
+		Patches.clear();
+		bPatchesValid = false;
+		return RocketDeltaV(Config.IspSeconds, StartMass, Mass());
+	}
+
 	const std::vector<TrajectoryPatch>& Flight::Trajectory()
 	{
 		if (!bPatchesValid && CurrentStatus == FlightStatus::Flying)

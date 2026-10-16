@@ -1,5 +1,6 @@
 #include "PeriapsisFlightSubsystem.h"
 
+#include "GameFramework/WorldSettings.h"
 #include "PeriapsisUniverse.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPeriapsisFlight, Log, All);
@@ -51,7 +52,14 @@ void UPeriapsisFlightSubsystem::Tick(float DeltaTime)
 	Super::Tick(DeltaTime);
 	if (Universe && !GetWorld()->IsPaused())
 	{
-		Universe->Tick(DeltaTime);
+		// The world runs dilated while the physics bubble warps; the rails use real time.
+		const AWorldSettings* Settings = GetWorld()->GetWorldSettings();
+		const double Dilation = Settings ? Settings->GetEffectiveTimeDilation() : 1.0;
+		Universe->Tick(DeltaTime / FMath::Max(Dilation, UE_SMALL_NUMBER));
+		if (AWorldSettings* Writable = GetWorld()->GetWorldSettings())
+		{
+			Writable->SetTimeDilation(static_cast<float>(Universe->GetPhysicsTimeDilation()));
+		}
 	}
 }
 

@@ -53,6 +53,9 @@ namespace Periapsis::Core
 	public:
 		// Integration step while thrusting, in seconds of simulation time.
 		static constexpr double kPoweredStep = 1.0 / 120.0;
+		// A physics state this close to the predicted trajectory keeps the prediction.
+		static constexpr double kPredictionMatchPosition = 0.01; // m
+		static constexpr double kPredictionMatchVelocity = 1e-4; // m/s
 
 		PERIAPSISCORE_API Flight(const CelestialSystem& InSystem, const ShipConfig& InConfig, int InBodyIndex,
 			const StateVector& InState, double InTime, const PredictionSettings& InPrediction = {});
@@ -65,6 +68,17 @@ namespace Periapsis::Core
 		const Vec3& ThrustDirection() const { return Direction; }
 
 		PERIAPSISCORE_API void Advance(double DeltaTime);
+
+		// Physics bubble (M3): the physics engine moves the ship instead of Advance(). The
+		// state is relative to InBodyIndex at InTime; impacts and sphere-of-influence changes
+		// are checked as after a thrust step. The predicted trajectory is kept while the state
+		// stays on it, so coasting in the bubble does not re-predict every step.
+		PERIAPSISCORE_API void SetPhysicsState(int InBodyIndex, const StateVector& InState, double InTime);
+
+		// Burns the engine at the current throttle for DeltaTime, for the physics bubble to
+		// apply, and returns the delta-v delivered along ThrustDirection() (m/s, rocket
+		// equation). Zero when the engine is off or the tanks are empty.
+		PERIAPSISCORE_API double BurnFor(double DeltaTime);
 
 		double Time() const { return CurrentTime; }
 		int BodyIndex() const { return CurrentBody; }
@@ -87,6 +101,7 @@ namespace Periapsis::Core
 		void Thrust(double TargetTime);
 		void Predict();
 		bool CheckSoiTransition();
+		bool MatchesPrediction() const;
 
 		const CelestialSystem& SystemRef;
 		ShipConfig Config;

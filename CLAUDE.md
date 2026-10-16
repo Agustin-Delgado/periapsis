@@ -76,3 +76,7 @@ lines and text and clear logs. Level assembly, materials and Niagara are done by
   automated part is green: the `Periapsis.Sim.Mission.TransferToTheMoon` test flies the
   transfer to the moon at 100,000x warp. Play-tested on 2026-10-15: 135 to 165 FPS and the
   transfer to the moon flown by hand (details in the ADR). Controls are shown on screen (F1).
+- M3: physics bubble on Chaos with a free-falling local frame, floating origin and bubble
+  membership (details in `Docs/adr/0003-physics-bubble.md`). `FUnitBridge` mirrors Y. The
+  rails/physics jump is 1e-13 m/s; Chaos matches the Core's integration to under 1 mm. The
+  `Periapsis.Editor.*` tests run real Chaos in PIE.

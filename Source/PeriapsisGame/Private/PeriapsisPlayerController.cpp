@@ -88,14 +88,15 @@ void APeriapsisPlayerController::PlayerTick(float DeltaTime)
 		return;
 	}
 
-	// Throttle.
+	// Throttle, in real time: the world is dilated while the physics bubble warps.
+	const double RealDelta = GetWorld()->DeltaRealTimeSeconds;
 	if (IsInputKeyDown(EKeys::LeftShift))
 	{
-		Universe->AddThrottle(ThrottleRatePerSecond * DeltaTime);
+		Universe->AddThrottle(ThrottleRatePerSecond * RealDelta);
 	}
 	if (IsInputKeyDown(EKeys::LeftControl))
 	{
-		Universe->AddThrottle(-ThrottleRatePerSecond * DeltaTime);
+		Universe->AddThrottle(-ThrottleRatePerSecond * RealDelta);
 	}
 	if (WasInputKeyJustPressed(EKeys::Z))
 	{

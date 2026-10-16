@@ -9,6 +9,9 @@
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "EngineUtils.h"
+#include "GameFramework/Pawn.h"
+#include "PeriapsisBubble.h"
 #include "PeriapsisCore/Kepler.h"
 #include "PeriapsisCore/OrbitalElements.h"
 #include "PeriapsisFlightSubsystem.h"
@@ -30,6 +33,7 @@ namespace
 	constexpr float LabelDuration = 0.0f;
 
 	const FColor PatchColors[] = {FColor(40, 200, 255), FColor(255, 150, 40), FColor(255, 230, 60), FColor(200, 120, 255)};
+	const FColor OtherVesselColor(200, 110, 60);
 	const FColor BodyOrbitColor(110, 110, 120);
 	const FColor SoiColor(60, 60, 75);
 
@@ -84,6 +88,19 @@ FPeriapsisUniverse* APeriapsisUniverseView::GetUniverse() const
 	return Subsystem ? Subsystem->GetUniverse() : nullptr;
 }
 
+APeriapsisBubble* APeriapsisUniverseView::GetBubble() const
+{
+	if (!Bubble.IsValid() && GetWorld())
+	{
+		for (TActorIterator<APeriapsisBubble> It(GetWorld()); It; ++It)
+		{
+			Bubble = *It;
+			break;
+		}
+	}
+	return Bubble.Get();
+}
+
 void APeriapsisUniverseView::EnsureBodyMeshes(const FPeriapsisUniverse& Universe)
 {
 	if (BodyMeshes.Num() == Universe.NumBodies() || !SphereMesh)
@@ -123,38 +140,50 @@ void APeriapsisUniverseView::EnsureBodyMeshes(const FPeriapsisUniverse& Universe
 void APeriapsisUniverseView::CycleFocus()
 {
 	const FPeriapsisUniverse* Universe = GetUniverse();
-	const int32 Count = Universe ? Universe->NumBodies() : 0;
-	Focus = Focus + 1 >= Count ? ShipFocus : Focus + 1;
+	const int32 Count = Universe ? Universe->NumVessels() + Universe->NumBodies() : 1;
+	Focus = (Focus + 1) % Count;
 }
 
 FString APeriapsisUniverseView::GetFocusName() const
 {
 	const FPeriapsisUniverse* Universe = GetUniverse();
-	if (!Universe || Focus == ShipFocus)
+	if (!Universe)
 	{
-		return Universe ? Universe->GetShipName() : FString(TEXT("-"));
+		return TEXT("-");
 	}
-	return Universe->GetBodyInfo(Focus).DisplayName;
+	return Focus < Universe->NumVessels() ? Universe->GetVessel(Focus).Name : Universe->GetBodyInfo(Focus - Universe->NumVessels()).DisplayName;
 }
 
 double APeriapsisUniverseView::GetFocusRadiusUnreal() const
 {
 	const FPeriapsisUniverse* Universe = GetUniverse();
-	if (!Universe || Focus == ShipFocus)
+	if (!Universe || Focus < Universe->NumVessels())
 	{
-		return 0.0;
+		return FUnitBridge::ToUnreal(0.5 * APeriapsisBubble::ShipLength);
 	}
-	return FUnitBridge::ToUnreal(Universe->GetSystem().Body(Focus).Radius);
-}
-
-Vec3 APeriapsisUniverseView::FocusPosition(const FPeriapsisUniverse& Universe) const
-{
-	return Focus == ShipFocus ? Universe.ShipPosition() : Universe.BodyPosition(Focus);
+	return FUnitBridge::ToUnreal(Universe->GetSystem().Body(Focus - Universe->NumVessels()).Radius);
 }
 
 FVector APeriapsisUniverseView::ToView(const Vec3& RootPosition, const Vec3& Origin)
 {
 	return FUnitBridge::ToUnreal(RootPosition - Origin);
+}
+
+FVector APeriapsisUniverseView::VesselLocation(const FPeriapsisUniverse& Universe, int32 Vessel, const Vec3& Origin, double Time) const
+{
+	// Simulated vessels are where Chaos shows them; the bubble places the others.
+	const APeriapsisBubble* Scene = GetBubble();
+	const UStaticMeshComponent* Mesh = Scene ? Scene->GetVesselMesh(Vessel) : nullptr;
+	return Mesh ? Mesh->GetComponentLocation() : ToView(Universe.VesselPositionAt(Vessel, Time), Origin);
+}
+
+FVector APeriapsisUniverseView::FocusLocation(const FPeriapsisUniverse& Universe, const Vec3& Origin, double Time) const
+{
+	if (Focus < Universe.NumVessels())
+	{
+		return VesselLocation(Universe, Focus, Origin, Time);
+	}
+	return ToView(Universe.BodyPositionAt(Focus - Universe.NumVessels(), Time), Origin);
 }
 
 double APeriapsisUniverseView::ScreenScale(const FVector& At) const
@@ -173,26 +202,45 @@ void APeriapsisUniverseView::Tick(float DeltaSeconds)
 		return;
 	}
 	EnsureBodyMeshes(*Universe);
+	if (Focus >= Universe->NumVessels() + Universe->NumBodies())
+	{
+		Focus = 0;
+	}
 
-	const Vec3 Origin = FocusPosition(*Universe);
+	// Everything is drawn at the moment the physics bubble shows, around its origin.
+	APeriapsisBubble* Scene = GetBubble();
+	if (Scene)
+	{
+		Scene->PlaceRailsVessels();
+	}
+	const double Time = Scene ? Scene->GetRenderTime() : Universe->GetTime();
+	const Vec3 Origin = Scene ? Scene->GetRenderOrigin() : Universe->ShipPosition();
+
 	for (int32 Index = 0; Index < BodyMeshes.Num(); ++Index)
 	{
-		const FVector Position = ToView(Universe->BodyPosition(Index), Origin);
+		const FVector Position = ToView(Universe->BodyPositionAt(Index, Time), Origin);
 		BodyMeshes[Index]->SetWorldLocation(Position);
 		const double Radius = FUnitBridge::ToUnreal(Universe->GetSystem().Body(Index).Radius);
 		DrawDebugString(GetWorld(), Position + FVector(0.0, 0.0, Radius * 1.15), Universe->GetBodyInfo(Index).DisplayName,
 			nullptr, FColor::White, LabelDuration, true, 1.2f);
 	}
 
-	DrawBodyOrbits(*Universe, Origin);
-	DrawTrajectory(*Universe, Origin);
-	DrawShip(*Universe, Origin);
+	DrawBodyOrbits(*Universe, Origin, Time);
+	for (int32 Vessel = 0; Vessel < Universe->NumVessels(); ++Vessel)
+	{
+		DrawTrajectory(*Universe, *Universe->GetVessel(Vessel).Flight, Origin, Time, Vessel == FPeriapsisUniverse::ActiveVessel);
+	}
+	DrawVessels(*Universe, Origin, Time);
+
+	if (APawn* Camera = UGameplayStatics::GetPlayerPawn(this, 0))
+	{
+		Camera->SetActorLocation(FocusLocation(*Universe, Origin, Time));
+	}
 }
 
-void APeriapsisUniverseView::DrawBodyOrbits(const FPeriapsisUniverse& Universe, const Vec3& Origin) const
+void APeriapsisUniverseView::DrawBodyOrbits(const FPeriapsisUniverse& Universe, const Vec3& Origin, double Now) const
 {
 	const CelestialSystem& System = Universe.GetSystem();
-	const double Now = Universe.GetTime();
 	for (int32 Index = 0; Index < System.BodyCount(); ++Index)
 	{
 		const CelestialBody& Body = System.Body(Index);
@@ -201,7 +249,7 @@ void APeriapsisUniverseView::DrawBodyOrbits(const FPeriapsisUniverse& Universe, 
 			continue;
 		}
 		const double ParentMu = System.Body(Body.ParentIndex).Mu;
-		const Vec3 ParentNow = Universe.BodyPosition(Body.ParentIndex);
+		const Vec3 ParentNow = Universe.BodyPositionAt(Body.ParentIndex, Now);
 		const double Period = OrbitalPeriod(Body.Orbit, ParentMu);
 		FVector Previous = ToView(ElementsToStateAt(Body.Orbit, ParentMu, Now).Position + ParentNow, Origin);
 		for (int32 Segment = 1; Segment <= OrbitSegments; ++Segment)
@@ -212,28 +260,34 @@ void APeriapsisUniverseView::DrawBodyOrbits(const FPeriapsisUniverse& Universe, 
 			Previous = Point;
 		}
 		// Sphere of influence, drawn in the body's orbital plane.
-		const FVector Center = ToView(Universe.BodyPosition(Index), Origin);
+		const FVector Center = ToView(Universe.BodyPositionAt(Index, Now), Origin);
 		const StateVector BodyState = System.StateRelativeToParent(Index, Now);
-		const FVector Normal = FVector(FUnitBridge::ToUnreal(Normalized(AngularMomentum(BodyState)))).GetSafeNormal();
-		const FVector AxisY = FVector(FUnitBridge::ToUnreal(Normalized(BodyState.Position))).GetSafeNormal();
+		const FVector Normal = FUnitBridge::DirectionToUnreal(AngularMomentum(BodyState));
+		const FVector AxisY = FUnitBridge::DirectionToUnreal(BodyState.Position);
 		DrawDebugCircle(GetWorld(), Center, FUnitBridge::ToUnreal(Body.SphereOfInfluence), 96, SoiColor, false, -1.0f, 0, 0.0f,
 			AxisY, FVector::CrossProduct(Normal, AxisY), false);
 	}
 }
 
-void APeriapsisUniverseView::DrawTrajectory(FPeriapsisUniverse& Universe, const Vec3& Origin) const
+void APeriapsisUniverseView::DrawTrajectory(const FPeriapsisUniverse& Universe, Flight& VesselFlight, const Vec3& Origin, double Now,
+	bool bActive) const
 {
 	const CelestialSystem& System = Universe.GetSystem();
-	const double Now = Universe.GetTime();
-	const std::vector<TrajectoryPatch>& Patches = Universe.GetFlight().Trajectory();
+	if (VesselFlight.Status() != FlightStatus::Flying)
+	{
+		return;
+	}
+	const std::vector<TrajectoryPatch>& Patches = VesselFlight.Trajectory();
+	// Other vessels: their current orbit only, dimmed.
+	const size_t PatchCount = bActive ? Patches.size() : FMath::Min<size_t>(Patches.size(), 1);
 
-	for (size_t PatchIndex = 0; PatchIndex < Patches.size(); ++PatchIndex)
+	for (size_t PatchIndex = 0; PatchIndex < PatchCount; ++PatchIndex)
 	{
 		const TrajectoryPatch& Patch = Patches[PatchIndex];
 		const CelestialBody& Body = System.Body(Patch.BodyIndex);
-		const FColor Color = PatchColors[FMath::Min<size_t>(PatchIndex, UE_ARRAY_COUNT(PatchColors) - 1)];
+		const FColor Color = bActive ? PatchColors[FMath::Min<size_t>(PatchIndex, UE_ARRAY_COUNT(PatchColors) - 1)] : OtherVesselColor;
 		// Each patch is drawn around where its body is now, as map views usually do.
-		const Vec3 BodyNow = Universe.BodyPosition(Patch.BodyIndex);
+		const Vec3 BodyNow = Universe.BodyPositionAt(Patch.BodyIndex, Now);
 		const bool bClosed = Patch.Elements.Eccentricity < 1.0;
 
 		const double Start = FMath::Max(Patch.StartTime, Now);
@@ -268,7 +322,7 @@ void APeriapsisUniverseView::DrawTrajectory(FPeriapsisUniverse& Universe, const 
 		}
 
 		// Apsis markers, when the orbit is not round enough to make them meaningless.
-		if (Patch.Elements.Eccentricity > 1e-3)
+		if (bActive && Patch.Elements.Eccentricity > 1e-3)
 		{
 			OrbitalElements AtApsis = Patch.Elements;
 			AtApsis.TrueAnomaly = 0.0;
@@ -286,7 +340,7 @@ void APeriapsisUniverseView::DrawTrajectory(FPeriapsisUniverse& Universe, const 
 			}
 		}
 
-		if (Patch.EndReason != PatchEnd::Horizon)
+		if (bActive && Patch.EndReason != PatchEnd::Horizon)
 		{
 			const FVector EndPoint = ToView(Patch.EndState.Position + BodyNow, Origin);
 			FString Label = TEXT("Impact");
@@ -300,18 +354,29 @@ void APeriapsisUniverseView::DrawTrajectory(FPeriapsisUniverse& Universe, const 
 	}
 }
 
-void APeriapsisUniverseView::DrawShip(FPeriapsisUniverse& Universe, const Vec3& Origin) const
+void APeriapsisUniverseView::DrawVessels(FPeriapsisUniverse& Universe, const Vec3& Origin, double Time) const
 {
-	const Flight& ShipFlight = Universe.GetFlight();
-	const FVector Ship = ToView(Universe.ShipPosition(), Origin);
-	const bool bCrashed = ShipFlight.Status() == FlightStatus::Crashed;
-	DrawDebugPoint(GetWorld(), Ship, 12.0f, bCrashed ? FColor::Red : FColor::White);
+	for (int32 Vessel = 0; Vessel < Universe.NumVessels(); ++Vessel)
+	{
+		const Flight& VesselFlight = *Universe.GetVessel(Vessel).Flight;
+		const FVector At = VesselLocation(Universe, Vessel, Origin, Time);
+		const bool bCrashed = VesselFlight.Status() == FlightStatus::Crashed;
+		if (Vessel != FPeriapsisUniverse::ActiveVessel)
+		{
+			DrawDebugPoint(GetWorld(), At, 9.0f, bCrashed ? FColor::Red : OtherVesselColor);
+			const double Distance = Universe.VesselDistance(Vessel, FPeriapsisUniverse::ActiveVessel);
+			DrawDebugString(GetWorld(), At, FString::Printf(TEXT("%s  %s"), *Universe.GetVessel(Vessel).Name, *FormatAltitude(Distance)),
+				nullptr, OtherVesselColor, LabelDuration, true, 1.0f);
+			continue;
+		}
 
-	// Engine direction, and velocity relative to the current body.
-	const double Length = 0.06 * ScreenScale(Ship);
-	const FVector Thrust = FVector(FUnitBridge::ToUnreal(ShipFlight.ThrustDirection())).GetSafeNormal();
-	const FVector Velocity = FVector(FUnitBridge::ToUnreal(ShipFlight.State().Velocity)).GetSafeNormal();
-	DrawDebugLine(GetWorld(), Ship, Ship + Velocity * Length, FColor::Green, false, -1.0f, 1, 0.0f);
-	DrawDebugDirectionalArrow(GetWorld(), Ship, Ship + Thrust * Length,
-		Length * 0.3, ShipFlight.IsThrusting() ? FColor(255, 90, 40) : FColor(160, 160, 160), false, -1.0f, 1, 0.0f);
+		DrawDebugPoint(GetWorld(), At, 12.0f, bCrashed ? FColor::Red : FColor::White);
+		// Engine direction, and velocity relative to the current body.
+		const double Length = 0.06 * ScreenScale(At);
+		const FVector Thrust = FUnitBridge::DirectionToUnreal(VesselFlight.ThrustDirection());
+		const FVector Velocity = FUnitBridge::DirectionToUnreal(VesselFlight.State().Velocity);
+		DrawDebugLine(GetWorld(), At, At + Velocity * Length, FColor::Green, false, -1.0f, 1, 0.0f);
+		DrawDebugDirectionalArrow(GetWorld(), At, At + Thrust * Length,
+			Length * 0.3, VesselFlight.IsThrusting() ? FColor(255, 90, 40) : FColor(160, 160, 160), false, -1.0f, 1, 0.0f);
+	}
 }

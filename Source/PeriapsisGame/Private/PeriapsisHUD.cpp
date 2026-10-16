@@ -4,6 +4,7 @@
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
 #include "PeriapsisCore/Constants.h"
+#include "PeriapsisCore/Kepler.h"
 #include "PeriapsisCore/OrbitalElements.h"
 #include "PeriapsisCore/Rocket.h"
 #include "PeriapsisPlayerController.h"
@@ -129,6 +130,36 @@ void APeriapsisHUD::DrawHUD()
 	Lines.Add(FString::Printf(TEXT("Fuel       %.0f kg"), ShipFlight.Fuel()));
 	Lines.Add(FString::Printf(TEXT("Delta-v    %.0f m/s"), ShipFlight.RemainingDeltaV()));
 	Lines.Add(FString::Printf(TEXT("TWR        %.2f"), ThrustToWeight(ShipFlight.Ship().Thrust, ShipFlight.Mass(), LocalGravity)));
+	Lines.Add(TEXT(""));
+	if (Universe->IsPhysicsActive())
+	{
+		int32 InBubble = 0;
+		for (int32 Index = 0; Index < Universe->NumVessels(); ++Index)
+		{
+			InBubble += Universe->GetVessel(Index).bInBubble ? 1 : 0;
+		}
+		const LocalFrame& Frame = Universe->GetLocalFrame();
+		// The frame is already at the end of the step being simulated; the ship's state is from its start.
+		const StateVector ShipNow = PropagateKepler(ShipFlight.State(), Body.Mu, Frame.Time() - ShipFlight.Time());
+		const StateVector ShipLocal = Frame.ToLocal(ChangeFrame(Universe->GetSystem(), ShipFlight.BodyIndex(), Frame.BodyIndex(),
+			ShipNow, Frame.Time()));
+		Lines.Add(FString::Printf(TEXT("Physics    bubble, %d vessel%s"), InBubble, InBubble == 1 ? TEXT("") : TEXT("s")));
+		Lines.Add(FString::Printf(TEXT("Origin     %.0f m, %.1f m/s away  (%d rebases)"), Norm(ShipLocal.Position), Norm(ShipLocal.Velocity),
+			Universe->GetRebaseCount()));
+	}
+	else
+	{
+		Lines.Add(TEXT("Physics    off: on rails"));
+	}
+	for (int32 Index = 0; Index < Universe->NumVessels(); ++Index)
+	{
+		if (Index != FPeriapsisUniverse::ActiveVessel)
+		{
+			const FPeriapsisVessel& Other = Universe->GetVessel(Index);
+			Lines.Add(FString::Printf(TEXT("%-10s %.2f km%s"), *Other.Name, Universe->VesselDistance(Index, FPeriapsisUniverse::ActiveVessel) / 1000.0,
+				Other.bInBubble ? TEXT("  in bubble") : TEXT("")));
+		}
+	}
 	if (const APeriapsisUniverseView* View = Controller->GetUniverseView())
 	{
 		Lines.Add(TEXT(""));

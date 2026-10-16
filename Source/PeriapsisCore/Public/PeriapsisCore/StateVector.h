@@ -13,6 +13,10 @@ namespace Periapsis::Core
 		Vec3 Velocity; // m/s
 	};
 
+	// Component-wise, for translating states between frames.
+	inline StateVector operator+(const StateVector& A, const StateVector& B) { return {A.Position + B.Position, A.Velocity + B.Velocity}; }
+	inline StateVector operator-(const StateVector& A, const StateVector& B) { return {A.Position - B.Position, A.Velocity - B.Velocity}; }
+
 	// Specific orbital energy (J/kg). Negative = bound.
 	inline double SpecificEnergy(const StateVector& S, double Mu)
 	{
