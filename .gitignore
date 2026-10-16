@@ -17,3 +17,11 @@ Plugins/**/Intermediate/
 # Core tests (CMake)
 build/
 out/
+
+# The tests live in the private repository periapsis-heldout and are copied over a checkout
+# (see the README there); they are never committed here.
+Tools/CoreTests/
+Source/PeriapsisSim/Private/Tests/
+Source/PeriapsisEditor/Private/Tests/
+Scripts/run-core-tests.ps1
+

@@ -1,7 +1,5 @@
 # Periapsis
 
-[![Core tests](https://github.com/Agustin-Delgado/periapsis/actions/workflows/core-tests.yml/badge.svg)](https://github.com/Agustin-Delgado/periapsis/actions/workflows/core-tests.yml)
-
 A rocket building and orbital exploration simulator in Unreal Engine 5 and C++, in the
 spirit of Kerbal Space Program. The orbital mechanics run in SI units and double precision.
 Coasting is analytic ("on rails") and powered flight is integrated. Trajectories are
@@ -21,8 +19,7 @@ There is no rocket building yet. See [Roadmap](#roadmap).
   Windows 10/11 SDK)
 - Git LFS (the original specification PDF is stored with it)
 
-The orbital Core has no Unreal dependency. Its tests need only a C++20 compiler and CMake,
-on Windows or Linux.
+The orbital Core has no Unreal dependency: it builds with any C++20 compiler.
 
 ## Getting started
 
@@ -96,8 +93,6 @@ Source/
   PeriapsisGame/    Game mode, focus-centered view, camera, HUD, input
   PeriapsisEditor/  Editor-only code and Play-In-Editor tests
 Data/               Bodies, terrain profiles and scenarios as JSON, validated on load
-Tools/CoreTests/    CMake + doctest suite for the Core, runs without Unreal
-Scripts/            Helper scripts
 Docs/               Technical specification and architecture decision records (adr/)
 ```
 
@@ -107,26 +102,14 @@ happens in a single place, `FUnitBridge`.
 
 ## Tests
 
-Core tests run without Unreal in about a second:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File Scripts/run-core-tests.ps1
-```
-
-They cover Kepler solvers, universal-variable propagation, state ↔ elements conversion,
-maneuvers, patched-conic prediction, powered flight, the physics bubble's local frames,
-terrain noise, cube-sphere meshes and level-of-detail selection. CI runs them on Windows and
-Linux on every push.
-
-Integration tests use Unreal's Automation framework (prefix `Periapsis.`). They include a
-full moon transfer flown at 100,000x warp, rails/physics transitions, a descent from orbit to
-a landing, and Play-In-Editor tests that fly the bubble and land on the terrain in Chaos:
-
-```bat
-"<UE_5.8>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "%CD%\Periapsis.uproject" -ExecCmds="Automation RunTests Periapsis; Quit" -unattended -nopause -NullRHI -nosplash
-```
-
-Results are written to `Saved/Logs/Periapsis.log`.
+The tests are kept in a private repository and are not part of this one. There are two
+suites: Core tests (CMake + doctest, no Unreal, about two seconds) covering Kepler solvers,
+universal-variable propagation, state ↔ elements conversion, maneuvers, patched-conic
+prediction, powered flight, the physics bubble's local frames, terrain noise, cube-sphere
+meshes and level-of-detail selection; and Unreal Automation tests (prefix `Periapsis.`)
+covering data validation, a moon transfer at 100,000x warp, rails/physics transitions, a
+descent from orbit to a landing, and Play-In-Editor runs that fly and land in Chaos. Their
+paths are listed in `.gitignore`. Each milestone's results are recorded in its ADR.
 
 ## Roadmap
 
@@ -150,6 +133,5 @@ Design decisions that refine or deviate from the spec are recorded in
 
 ## License
 
-Proprietary, all rights reserved. Periapsis is meant to become a commercial game, so no
-open-source license is granted. See [LICENSE](LICENSE). Third-party components keep their
-own licenses (doctest: MIT).
+[MIT](LICENSE). Unreal Engine is not part of this repository; building and shipping the
+project requires accepting the Unreal Engine End User License Agreement from Epic Games.

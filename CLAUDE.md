@@ -35,7 +35,12 @@ The specification is `Docs/TechnicalSpecification_v0.1.md` (the original, in Spa
 
 ## Commands
 
-Core tests (no Unreal, ~1 s). `cmake` is not on the PATH: the script uses the one bundled
+The repository is public (MIT) and the tests are not in it: they live in the private
+repository `Agustin-Delgado/periapsis-heldout` and are copied over the checkout (their paths are
+in `.gitignore`, so they can stay there). Never commit them here. New tests go to that
+repository, at the same paths.
+
+Core tests (no Unreal, ~2 s). `cmake` is not on the PATH: the script uses the one bundled
 with Visual Studio Build Tools 2022.
 
 ```powershell
@@ -54,7 +59,8 @@ in `Saved/Logs/Periapsis.log`; search for `Test Completed`.
 Don't build while the editor or the game is open: Live Coding and the loaded DLLs block the
 build.
 
-CI (`.github/workflows/core-tests.yml`) runs the Core tests on Windows and Linux.
+CI lives in `periapsis-heldout`: it checks out this repository, lays the tests over it and runs
+the Core tests on Windows and Linux.
 
 ## Definition of done
 
