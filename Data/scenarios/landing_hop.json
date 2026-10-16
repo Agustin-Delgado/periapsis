@@ -1,0 +1,22 @@
+{
+	"_comment": "M4 landing test: the prototype ship 2 m above the ground of home, sinking at 1 m/s. Left alone it touches down at about 6 m/s and lands; throttle up (radial out) for a hop. Launch with -Scenario=scenarios/landing_hop.json.",
+	"system": "bodies/home_system.json",
+	"start_time_s": 0,
+	"ship": {
+		"name": "Prototype",
+		"dry_mass_kg": 4000,
+		"fuel_mass_kg": 2000,
+		"thrust_n": 200000,
+		"isp_s": 350,
+		"length_m": 6,
+		"diameter_m": 2,
+		"attitude": "surface_retrograde"
+	},
+	"start_surface": {
+		"body": "home",
+		"latitude_deg": 12.0,
+		"longitude_deg": 40.0,
+		"height_m": 2,
+		"vertical_speed_m_s": -1
+	}
+}

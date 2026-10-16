@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "PeriapsisCore/LocalFrame.h"
 #include "PeriapsisCore/Vec3.h"
 #include "PeriapsisPhysicsScene.h"
 #include "PeriapsisBubble.generated.h"
@@ -12,7 +13,26 @@ namespace Chaos
 {
 	class FRigidBodyHandle_Internal;
 }
+class UProceduralMeshComponent;
 class UStaticMeshComponent;
+
+// How the simulation maps to the Unreal world for what is on screen this frame. The world is
+// the physics bubble's local frame (or, on rails, the root frame centred on the ship), at the
+// moment Chaos is showing, shifted so it lines up with where Chaos draws the ship.
+struct PERIAPSISGAME_API FPeriapsisViewTransform
+{
+	double Time = 0.0;
+	Periapsis::Core::LocalFrame Frame;  // at Time; invalid on rails
+	Periapsis::Core::Vec3 FrameBodyRoot; // where the frame's body is in the root frame, at Time
+	Periapsis::Core::Vec3 Correction;    // local, added after the frame
+	Periapsis::Core::Vec3 RailsOrigin;   // on rails: the root position at the world origin
+
+	FVector ToWorld(const Periapsis::Core::Vec3& RootPosition) const;
+	Periapsis::Core::Vec3 ToRoot(const FVector& World) const;
+	FVector DirectionToWorld(const Periapsis::Core::Vec3& Inertial) const;
+	// Rotation from a body's fixed frame (in Unreal axes, mirrored like everything else) to the world.
+	FQuat BodyFixedToWorld(const Periapsis::Core::CelestialBody& Body) const;
+};
 
 // The physics bubble on Chaos (M3): one mesh per vessel, simulated by Chaos while the vessel
 // is in the bubble and placed on its rails otherwise.
@@ -40,24 +60,20 @@ public:
 	virtual Periapsis::Core::StateVector GetState(int32 Vessel) const override;
 	virtual void SetState(int32 Vessel, const Periapsis::Core::StateVector& Local) override;
 	virtual void SetMass(int32 Vessel, double MassKg) override;
-	virtual void SetAcceleration(int32 Vessel, const Periapsis::Core::Vec3& Acceleration) override;
+	virtual void SetAcceleration(int32 Vessel, const Periapsis::Core::Vec3& Acceleration, bool bInContact) override;
 	virtual void SetAttitude(int32 Vessel, const Periapsis::Core::Vec3& Forward) override;
+	virtual void SetFrozen(int32 Vessel, bool bFrozen) override;
+	virtual bool HasGround() const override;
 
 	// The universe time of what is on screen: behind the simulation while Chaos interpolates.
 	double GetRenderTime() const;
-	// Where the world origin is, in the root body's frame, for what is on screen: everything
-	// that is not a simulated mesh is drawn relative to it.
-	Periapsis::Core::Vec3 GetRenderOrigin() const;
-	// Places the meshes of the vessels on rails, relative to the render origin.
-	void PlaceRailsVessels();
+	// How to draw everything that is not a simulated mesh, this frame.
+	FPeriapsisViewTransform GetViewTransform() const;
+	// Places the meshes of the vessels on rails.
+	void PlaceRailsVessels(const FPeriapsisViewTransform& View);
 	UStaticMeshComponent* GetVesselMesh(int32 Vessel) const;
 	bool IsSimulating(int32 Vessel) const;
 
-	// Size of the placeholder meshes, in metres: a 2 x 6 m cylinder for the active vessel,
-	// a 3 m cube for the others (parts come in M5).
-	static constexpr double ShipDiameter = 2.0;
-	static constexpr double ShipLength = 6.0;
-	static constexpr double OtherSize = 3.0;
 
 protected:
 	virtual void BeginPlay() override;
@@ -80,6 +96,16 @@ private:
 
 	UPROPERTY()
 	TArray<TObjectPtr<UStaticMeshComponent>> VesselMeshes;
+
+	// Collision ground under the vessels near the surface (body-fixed frame only), hidden.
+	UPROPERTY()
+	TObjectPtr<UProceduralMeshComponent> GroundPatch;
+	void UpdateGroundPatch(FPeriapsisUniverse& Universe);
+	bool bGroundReady = false;
+	Periapsis::Core::Vec3 GroundCenter;  // local
+	int32 GroundRebases = -1;            // rebases and frame changes it was built for
+	int32 GroundFrameChanges = -1;
+	FPeriapsisUniverse* GroundUniverse = nullptr;
 
 	// Changes requested from the physics step, applied on the next game-thread tick: bodies
 	// are not created or destroyed while Chaos is stepping.

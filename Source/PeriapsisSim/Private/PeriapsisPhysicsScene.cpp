@@ -34,7 +34,7 @@ void FPeriapsisPointMassScene::SetMass(int32 Vessel, double MassKg)
 	Bodies.FindChecked(Vessel).Mass = MassKg;
 }
 
-void FPeriapsisPointMassScene::SetAcceleration(int32 Vessel, const Vec3& Acceleration)
+void FPeriapsisPointMassScene::SetAcceleration(int32 Vessel, const Vec3& Acceleration, bool)
 {
 	Bodies.FindChecked(Vessel).Acceleration = Acceleration;
 }
@@ -44,12 +44,22 @@ void FPeriapsisPointMassScene::SetAttitude(int32, const Vec3&)
 	// Point masses have no orientation.
 }
 
+void FPeriapsisPointMassScene::SetFrozen(int32 Vessel, bool bFrozen)
+{
+	FBody& Body = Bodies.FindChecked(Vessel);
+	Body.bFrozen = bFrozen;
+	if (bFrozen)
+	{
+		Body.State.Velocity = {};
+	}
+}
+
 void FPeriapsisPointMassScene::Simulate(double Dt)
 {
 	for (TPair<int32, FBody>& Pair : Bodies)
 	{
 		FBody& Body = Pair.Value;
-		if (Body.bReady)
+		if (Body.bReady && !Body.bFrozen)
 		{
 			const Vec3& A = Body.Acceleration;
 			Body.State = {Body.State.Position + Body.State.Velocity * Dt + A * (0.5 * Dt * Dt), Body.State.Velocity + A * Dt};

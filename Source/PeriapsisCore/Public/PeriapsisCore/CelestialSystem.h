@@ -4,6 +4,7 @@
 #include "PeriapsisCore/Api.h"
 
 #include "PeriapsisCore/OrbitalElements.h"
+#include "PeriapsisCore/Terrain.h"
 
 #include <string>
 #include <string_view>
@@ -20,7 +21,9 @@ namespace Periapsis::Core
 		double Mu = 0.0;                // m^3/s^2
 		double Radius = 0.0;            // m
 		double SphereOfInfluence = 0.0; // m; <= 0 means "compute with Laplace's formula"
-		double RotationPeriod = 0.0;    // s, sidereal
+		double RotationPeriod = 0.0;    // s, sidereal, around +Z; <= 0 means it does not turn
+		double RotationAtEpoch = 0.0;   // rad, body-fixed +X from inertial +X at time 0
+		TerrainShape Terrain;           // relief above Radius; flat by default
 		OrbitalElements Orbit;          // relative to the parent; ignored for the root
 	};
 

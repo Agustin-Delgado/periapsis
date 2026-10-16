@@ -1,10 +1,12 @@
 #include "PeriapsisDataLoader.h"
 
 #include "Dom/JsonObject.h"
+#include "Algo/Find.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "PeriapsisCore/Constants.h"
 #include "PeriapsisCore/OrbitalElements.h"
+#include "PeriapsisCore/Surface.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 
@@ -43,6 +45,122 @@ namespace
 		}
 	}
 
+	// "terrain": {"seed": N, "profile": "terrain/x.json"}; the profile lists the noise layers.
+	void ParseTerrain(const FJsonObject& T, const FString& DataRoot, const FString& Where, CelestialBody& Body, TArray<FString>& OutErrors)
+	{
+		double Seed = 0.0;
+		T.TryGetNumberField(TEXT("seed"), Seed);
+		FString ProfilePath;
+		if (!T.TryGetStringField(TEXT("profile"), ProfilePath))
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: terrain needs a 'profile'"), *Where));
+			return;
+		}
+		FString ProfileJson;
+		if (!FFileHelper::LoadFileToString(ProfileJson, *FPaths::Combine(DataRoot, ProfilePath)))
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: cannot read terrain profile '%s'"), *Where, *ProfilePath));
+			return;
+		}
+		const FString ProfileWhere = FString::Printf(TEXT("terrain profile '%s'"), *ProfilePath);
+		const TSharedPtr<FJsonObject> Profile = ParseObject(ProfileJson, ProfileWhere, OutErrors);
+		const TArray<TSharedPtr<FJsonValue>>* LayerValues = nullptr;
+		if (!Profile || !Profile->TryGetArrayField(TEXT("layers"), LayerValues))
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: missing 'layers'"), *ProfileWhere));
+			return;
+		}
+
+		std::vector<TerrainLayer> Layers;
+		for (int32 Index = 0; Index < LayerValues->Num(); ++Index)
+		{
+			const FString LayerWhere = FString::Printf(TEXT("%s, layers[%d]"), *ProfileWhere, Index);
+			const TSharedPtr<FJsonObject>* LayerObject = nullptr;
+			if (!(*LayerValues)[Index]->TryGetObject(LayerObject))
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: not an object"), *LayerWhere));
+				continue;
+			}
+			const FJsonObject& L = **LayerObject;
+			TerrainLayer Layer;
+			FString Type;
+			L.TryGetStringField(TEXT("type"), Type);
+			if (Type == TEXT("fbm"))
+			{
+				Layer.Kind = TerrainLayer::EKind::Fbm;
+			}
+			else if (Type == TEXT("ridged"))
+			{
+				Layer.Kind = TerrainLayer::EKind::Ridged;
+			}
+			else
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: 'type' must be 'fbm' or 'ridged' (got '%s')"), *LayerWhere, *Type));
+			}
+			double Octaves = 1.0;
+			ReadNumber(L, TEXT("amplitude_m"), LayerWhere, Layer.Amplitude, OutErrors);
+			ReadNumber(L, TEXT("wavelength_m"), LayerWhere, Layer.Wavelength, OutErrors);
+			ReadNumber(L, TEXT("octaves"), LayerWhere, Octaves, OutErrors);
+			L.TryGetNumberField(TEXT("persistence"), Layer.Persistence);
+			L.TryGetNumberField(TEXT("lacunarity"), Layer.Lacunarity);
+			Layer.Octaves = static_cast<int>(Octaves);
+			RequirePositive(Layer.Amplitude, TEXT("amplitude_m"), LayerWhere, OutErrors);
+			RequirePositive(Layer.Wavelength, TEXT("wavelength_m"), LayerWhere, OutErrors);
+			if (Layer.Octaves < 1 || Layer.Octaves > 24 || Octaves != Layer.Octaves)
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: 'octaves' must be a whole number from 1 to 24"), *LayerWhere));
+			}
+			if (!(Layer.Persistence > 0.0 && Layer.Persistence <= 1.0))
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: 'persistence' must be in (0, 1]"), *LayerWhere));
+			}
+			if (!(Layer.Lacunarity > 1.0))
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: 'lacunarity' must be above 1"), *LayerWhere));
+			}
+			Layers.push_back(Layer);
+		}
+		Body.Terrain = TerrainShape(static_cast<uint64_t>(Seed), std::move(Layers), Body.Radius);
+		if (Body.Terrain.MaxHeight() > 0.05 * Body.Radius || -Body.Terrain.MinHeight() > 0.05 * Body.Radius)
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: terrain relief must stay within 5%% of the radius"), *Where));
+		}
+	}
+
+	// Above the ground: body, latitude, longitude, height of the ship's base over the terrain and
+	// vertical speed, moving with the ground otherwise. For landing tests and short hops.
+	void ParseStartSurface(const FJsonObject& O, const FPeriapsisSystemData& SystemData, double StartTime, double Clearance, int32& OutBody,
+		StateVector& OutState, TArray<FString>& OutErrors)
+	{
+		const FString Where = TEXT("start_surface");
+		FString BodyId;
+		double Latitude = 0.0, Longitude = 0.0, Height = 0.0, VerticalSpeed = 0.0;
+		O.TryGetStringField(TEXT("body"), BodyId);
+		ReadNumber(O, TEXT("latitude_deg"), Where, Latitude, OutErrors);
+		ReadNumber(O, TEXT("longitude_deg"), Where, Longitude, OutErrors);
+		ReadNumber(O, TEXT("height_m"), Where, Height, OutErrors);
+		O.TryGetNumberField(TEXT("vertical_speed_m_s"), VerticalSpeed);
+		OutBody = SystemData.Bodies.IndexOfByPredicate([&](const FPeriapsisBodyInfo& B) { return B.Id == BodyId; });
+		if (OutBody == INDEX_NONE)
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: unknown body '%s'"), *Where, *BodyId));
+			OutBody = kNoBody;
+			return;
+		}
+		if (FMath::Abs(Latitude) > 90.0 || Height < 0.0)
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: latitude must be within +-90 and height not negative"), *Where));
+			return;
+		}
+		const CelestialBody& Body = SystemData.System.Body(OutBody);
+		const double Lat = DegToRad(Latitude);
+		const double Lon = DegToRad(Longitude);
+		const Vec3 Up{FMath::Cos(Lat) * FMath::Cos(Lon), FMath::Cos(Lat) * FMath::Sin(Lon), FMath::Sin(Lat)};
+		const double Radius = Body.Radius + Body.Terrain.Height(Up) + Clearance + Height;
+		const Vec3 Position = FromBodyFixed(Body, Up * Radius, StartTime);
+		OutState = {Position, GroundVelocity(Body, Position) + Normalized(Position) * VerticalSpeed};
+	}
+
 	// A circular orbit: body, altitude, inclination and true anomaly at the scenario start.
 	void ParseStartOrbit(const FJsonObject& O, const FString& Where, const FPeriapsisSystemData& SystemData, double StartTime,
 		int32& OutBody, StateVector& OutState, TArray<FString>& OutErrors)
@@ -64,6 +182,10 @@ namespace
 		const CelestialBody& Body = SystemData.System.Body(OutBody);
 		const double Radius = Body.Radius + Altitude;
 		RequirePositive(Altitude, TEXT("altitude_m"), Where, OutErrors);
+		if (Altitude <= Body.Terrain.MaxHeight())
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: altitude is below the highest terrain (%.0f m)"), *Where, Body.Terrain.MaxHeight()));
+		}
 		if (Radius >= Body.SphereOfInfluence)
 		{
 			OutErrors.Add(FString::Printf(TEXT("%s: altitude is outside the body's sphere of influence"), *Where));
@@ -82,17 +204,18 @@ FString PeriapsisData::DataDirectory()
 	return FPaths::Combine(FPaths::ProjectDir(), TEXT("Data"));
 }
 
-bool PeriapsisData::ParseSystem(const FString& Json, FPeriapsisSystemData& Out, TArray<FString>& OutErrors)
+bool PeriapsisData::ParseSystem(const FString& Json, FPeriapsisSystemData& Out, TArray<FString>& OutErrors, const FString& DataRoot)
 {
+	const FString Root = DataRoot.IsEmpty() ? DataDirectory() : DataRoot;
 	const int32 ErrorsBefore = OutErrors.Num();
-	const TSharedPtr<FJsonObject> Root = ParseObject(Json, TEXT("system"), OutErrors);
-	if (!Root)
+	const TSharedPtr<FJsonObject> System = ParseObject(Json, TEXT("system"), OutErrors);
+	if (!System)
 	{
 		return false;
 	}
 
 	const TArray<TSharedPtr<FJsonValue>>* BodyValues = nullptr;
-	if (!Root->TryGetArrayField(TEXT("bodies"), BodyValues) || BodyValues->IsEmpty())
+	if (!System->TryGetArrayField(TEXT("bodies"), BodyValues) || BodyValues->IsEmpty())
 	{
 		OutErrors.Add(TEXT("system: 'bodies' must be a non-empty array"));
 		return false;
@@ -153,6 +276,22 @@ bool PeriapsisData::ParseSystem(const FString& Json, FPeriapsisSystemData& Out, 
 		RequirePositive(SurfaceGravity, TEXT("surface_gravity_m_s2"), Where, OutErrors);
 		Body.Mu = SurfaceGravity * Body.Radius * Body.Radius;
 		B.TryGetNumberField(TEXT("rotation_period_s"), Body.RotationPeriod);
+		double RotationAtEpoch = 0.0;
+		B.TryGetNumberField(TEXT("rotation_at_epoch_deg"), RotationAtEpoch);
+		Body.RotationAtEpoch = DegToRad(RotationAtEpoch);
+
+		const TSharedPtr<FJsonObject>* TerrainObject = nullptr;
+		if (B.TryGetObjectField(TEXT("terrain"), TerrainObject))
+		{
+			ParseTerrain(**TerrainObject, Root, Where, Body, OutErrors);
+		}
+		Info.RotatingFrameAltitude = Body.Terrain.MaxHeight() + 15000.0;
+		B.TryGetNumberField(TEXT("rotating_frame_altitude_m"), Info.RotatingFrameAltitude);
+		if (Info.RotatingFrameAltitude <= Body.Terrain.MaxHeight())
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: 'rotating_frame_altitude_m' must be above the highest terrain (%.0f m)"), *Where,
+				Body.Terrain.MaxHeight()));
+		}
 
 		FString ParentId;
 		const bool bHasParent = B.TryGetStringField(TEXT("parent"), ParentId);
@@ -253,7 +392,7 @@ bool PeriapsisData::ParseScenario(const FString& Json, const FString& DataRoot, 
 		OutErrors.Add(FString::Printf(TEXT("scenario: cannot read system file '%s'"), *SystemPath));
 		return false;
 	}
-	if (!ParseSystem(SystemJson, Result.SystemData, OutErrors))
+	if (!ParseSystem(SystemJson, Result.SystemData, OutErrors, DataRoot))
 	{
 		return false;
 	}
@@ -279,14 +418,52 @@ bool PeriapsisData::ParseScenario(const FString& Json, const FString& DataRoot, 
 	{
 		OutErrors.Add(TEXT("ship: 'fuel_mass_kg' cannot be negative"));
 	}
+	FString Attitude;
+	if (S.TryGetStringField(TEXT("attitude"), Attitude))
+	{
+		static const TPair<const TCHAR*, AttitudeMode> Modes[] = {
+			{TEXT("prograde"), AttitudeMode::Prograde},
+			{TEXT("retrograde"), AttitudeMode::Retrograde},
+			{TEXT("normal"), AttitudeMode::Normal},
+			{TEXT("anti_normal"), AttitudeMode::AntiNormal},
+			{TEXT("radial_out"), AttitudeMode::RadialOut},
+			{TEXT("radial_in"), AttitudeMode::RadialIn},
+			{TEXT("surface_prograde"), AttitudeMode::SurfacePrograde},
+			{TEXT("surface_retrograde"), AttitudeMode::SurfaceRetrograde},
+		};
+		const TPair<const TCHAR*, AttitudeMode>* Found = Algo::FindByPredicate(Modes, [&](const auto& Mode) { return Attitude == Mode.Key; });
+		if (Found)
+		{
+			Result.StartAttitude = Found->Value;
+		}
+		else
+		{
+			OutErrors.Add(FString::Printf(TEXT("ship: unknown 'attitude' '%s'"), *Attitude));
+		}
+	}
+	S.TryGetNumberField(TEXT("length_m"), Result.ShipLength);
+	S.TryGetNumberField(TEXT("diameter_m"), Result.ShipDiameter);
+	RequirePositive(Result.ShipLength, TEXT("length_m"), ShipWhere, OutErrors);
+	RequirePositive(Result.ShipDiameter, TEXT("diameter_m"), ShipWhere, OutErrors);
 
 	const TSharedPtr<FJsonObject>* OrbitObject = nullptr;
-	if (!Root->TryGetObjectField(TEXT("start_orbit"), OrbitObject))
+	const TSharedPtr<FJsonObject>* SurfaceObject = nullptr;
+	const bool bOrbit = Root->TryGetObjectField(TEXT("start_orbit"), OrbitObject);
+	const bool bSurface = Root->TryGetObjectField(TEXT("start_surface"), SurfaceObject);
+	if (bOrbit == bSurface)
 	{
-		OutErrors.Add(TEXT("scenario: missing 'start_orbit'"));
+		OutErrors.Add(TEXT("scenario: needs exactly one of 'start_orbit' and 'start_surface'"));
 		return false;
 	}
-	ParseStartOrbit(**OrbitObject, TEXT("start_orbit"), Result.SystemData, Result.StartTime, Result.StartBody, Result.StartState, OutErrors);
+	if (bOrbit)
+	{
+		ParseStartOrbit(**OrbitObject, TEXT("start_orbit"), Result.SystemData, Result.StartTime, Result.StartBody, Result.StartState, OutErrors);
+	}
+	else
+	{
+		ParseStartSurface(**SurfaceObject, Result.SystemData, Result.StartTime, 0.5 * Result.ShipLength, Result.StartBody, Result.StartState,
+			OutErrors);
+	}
 
 	const TArray<TSharedPtr<FJsonValue>>* Others = nullptr;
 	if (Root->TryGetArrayField(TEXT("other_vessels"), Others))
@@ -308,6 +485,8 @@ bool PeriapsisData::ParseScenario(const FString& Json, const FString& DataRoot, 
 			}
 			ReadNumber(V, TEXT("mass_kg"), Where, Vessel.Mass, OutErrors);
 			RequirePositive(Vessel.Mass, TEXT("mass_kg"), Where, OutErrors);
+			V.TryGetNumberField(TEXT("size_m"), Vessel.Size);
+			RequirePositive(Vessel.Size, TEXT("size_m"), Where, OutErrors);
 			const TSharedPtr<FJsonObject>* VesselOrbit = nullptr;
 			if (!V.TryGetObjectField(TEXT("start_orbit"), VesselOrbit))
 			{

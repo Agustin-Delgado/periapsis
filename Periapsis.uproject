@@ -3,6 +3,12 @@
 	"EngineAssociation": "5.8",
 	"Category": "",
 	"Description": "Rocket building and orbital exploration simulator.",
+	"Plugins": [
+		{
+			"Name": "ProceduralMeshComponent",
+			"Enabled": true
+		}
+	],
 	"Modules": [
 		{
 			"Name": "PeriapsisCore",

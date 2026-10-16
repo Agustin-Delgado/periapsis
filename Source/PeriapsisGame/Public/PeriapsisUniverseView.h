@@ -6,6 +6,8 @@
 #include "PeriapsisUniverseView.generated.h"
 
 class APeriapsisBubble;
+class APeriapsisTerrain;
+struct FPeriapsisViewTransform;
 class FPeriapsisUniverse;
 class UDirectionalLightComponent;
 class UPostProcessComponent;
@@ -47,14 +49,13 @@ private:
 	FPeriapsisUniverse* GetUniverse() const;
 	APeriapsisBubble* GetBubble() const;
 	void EnsureBodyMeshes(const FPeriapsisUniverse& Universe);
-	void DrawBodyOrbits(const FPeriapsisUniverse& Universe, const Periapsis::Core::Vec3& Origin, double Time) const;
-	void DrawVessels(FPeriapsisUniverse& Universe, const Periapsis::Core::Vec3& Origin, double Time) const;
-	void DrawTrajectory(const FPeriapsisUniverse& Universe, Periapsis::Core::Flight& Flight, const Periapsis::Core::Vec3& Origin,
-		double Time, bool bActive) const;
-	FVector VesselLocation(const FPeriapsisUniverse& Universe, int32 Vessel, const Periapsis::Core::Vec3& Origin, double Time) const;
-	FVector FocusLocation(const FPeriapsisUniverse& Universe, const Periapsis::Core::Vec3& Origin, double Time) const;
-	// Converts a position in the root frame to the view, relative to Origin.
-	static FVector ToView(const Periapsis::Core::Vec3& RootPosition, const Periapsis::Core::Vec3& Origin);
+	APeriapsisTerrain* GetTerrain() const;
+	void DrawBodyOrbits(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View) const;
+	void DrawVessels(FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View) const;
+	void DrawTrajectory(const FPeriapsisUniverse& Universe, Periapsis::Core::Flight& Flight, const FPeriapsisViewTransform& View,
+		bool bActive) const;
+	FVector VesselLocation(const FPeriapsisUniverse& Universe, int32 Vessel, const FPeriapsisViewTransform& View) const;
+	FVector FocusLocation(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View) const;
 	double ScreenScale(const FVector& At) const;
 
 	UPROPERTY()
@@ -73,5 +74,6 @@ private:
 	TObjectPtr<UPostProcessComponent> Exposure;
 
 	mutable TWeakObjectPtr<APeriapsisBubble> Bubble;
+	mutable TWeakObjectPtr<APeriapsisTerrain> TerrainActor;
 	int32 Focus = 0;
 };

@@ -22,6 +22,7 @@ namespace Periapsis::Core
 	enum class FlightStatus
 	{
 		Flying,
+		Landed, // at rest on the ground, turning with the body
 		Crashed,
 	};
 
@@ -34,9 +35,13 @@ namespace Periapsis::Core
 		AntiNormal,
 		RadialOut,
 		RadialIn,
+		SurfacePrograde,   // along the velocity relative to the ground
+		SurfaceRetrograde, // against it: the landing attitude
 	};
 
-	PERIAPSISCORE_API Vec3 AttitudeDirection(AttitudeMode Mode, const StateVector& State);
+	// The surface modes need the body (its rotation); without it they use the inertial velocity.
+	// When the velocity is too small to give a direction, the modes point up (radial out).
+	PERIAPSISCORE_API Vec3 AttitudeDirection(AttitudeMode Mode, const StateVector& State, const CelestialBody* Body = nullptr);
 
 	// Re-expresses a state relative to an adjacent body in the hierarchy (parent or child).
 	PERIAPSISCORE_API StateVector ChangeFrame(const CelestialSystem& System, int FromBody, int ToBody,
@@ -53,6 +58,8 @@ namespace Periapsis::Core
 	public:
 		// Integration step while thrusting, in seconds of simulation time.
 		static constexpr double kPoweredStep = 1.0 / 120.0;
+		// The physics bubble keeps vessels on the ground; one this deep below it fell through.
+		static constexpr double kFellThroughDepth = 100.0; // m
 		// A physics state this close to the predicted trajectory keeps the prediction.
 		static constexpr double kPredictionMatchPosition = 0.01; // m
 		static constexpr double kPredictionMatchVelocity = 1e-4; // m/s
@@ -80,6 +87,15 @@ namespace Periapsis::Core
 		// equation). Zero when the engine is off or the tanks are empty.
 		PERIAPSISCORE_API double BurnFor(double DeltaTime);
 
+		// Puts the ship to rest on the ground where it is: from then on it turns with the body
+		// and costs nothing to simulate (spec 5.10). TakeOff() makes it fly again from there.
+		PERIAPSISCORE_API void Land();
+		PERIAPSISCORE_API void TakeOff();
+		// Destroyed by an impact the physics bubble detected.
+		PERIAPSISCORE_API void Crash();
+		// Where the landed ship sits, in the body-fixed frame.
+		const Vec3& LandedPosition() const { return LandedAt; }
+
 		double Time() const { return CurrentTime; }
 		int BodyIndex() const { return CurrentBody; }
 		const StateVector& State() const { return CurrentState; } // relative to BodyIndex()
@@ -100,6 +116,7 @@ namespace Periapsis::Core
 		void Coast(double TargetTime);
 		void Thrust(double TargetTime);
 		void Predict();
+		void FollowGround();
 		bool CheckSoiTransition();
 		bool MatchesPrediction() const;
 
@@ -114,6 +131,7 @@ namespace Periapsis::Core
 		double ThrottleValue = 0.0;
 		Vec3 Direction{1.0, 0.0, 0.0};
 		FlightStatus CurrentStatus = FlightStatus::Flying;
+		Vec3 LandedAt;
 
 		std::vector<TrajectoryPatch> Patches;
 		size_t PatchIndex = 0;

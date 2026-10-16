@@ -80,3 +80,7 @@ lines and text and clear logs. Level assembly, materials and Niagara are done by
   membership (details in `Docs/adr/0003-physics-bubble.md`). `FUnitBridge` mirrors Y. The
   rails/physics jump is 1e-13 m/s; Chaos matches the Core's integration to under 1 mm. The
   `Periapsis.Editor.*` tests run real Chaos in PIE.
+- M4: spherical terrain (noise in data, cube-sphere with error-driven detail, worker
+  threads), body rotation, a body-fixed physics frame near the ground, collision patch,
+  impacts, rest and landing (details in `Docs/adr/0004-spherical-terrain.md`). Launch with
+  `-Scenario=scenarios/landing_hop.json -CameraDistance=40` to start on the ground.

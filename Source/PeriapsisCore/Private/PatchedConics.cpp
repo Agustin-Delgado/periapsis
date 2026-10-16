@@ -2,6 +2,7 @@
 
 #include "PeriapsisCore/Constants.h"
 #include "PeriapsisCore/Kepler.h"
+#include "PeriapsisCore/Surface.h"
 
 #include <algorithm>
 #include <cmath>
@@ -31,9 +32,10 @@ namespace Periapsis::Core
 				{
 					Sources.push_back({PatchEnd::SoiExit, kNoBody});
 				}
-				if (B.Radius > 0.0 && PeriapsisRadius(El) < B.Radius)
+				if (B.Radius > 0.0 && PeriapsisRadius(El) < MaxSurfaceRadius(B))
 				{
 					Sources.push_back({PatchEnd::Impact, kNoBody});
+					bCanHitGround = true;
 				}
 				for (const int Child : System.Children(BodyIndex))
 				{
@@ -42,6 +44,20 @@ namespace Periapsis::Core
 			}
 
 			size_t Count() const { return Sources.size(); }
+			bool CanHitGround() const { return bCanHitGround; }
+
+			// Longest time step that cannot skip over the ground: the ship cannot reach the top
+			// of the relief, nor the ground itself (whose slope is bounded), any sooner.
+			double SafeStepAboveGround(double Time) const
+			{
+				const CelestialBody& B = System.Body(BodyIndex);
+				const StateVector S = ShipAt(Time);
+				const double Speed = std::max(Norm(S.Velocity), 1e-9);
+				const double AboveRelief = Norm(S.Position) - MaxSurfaceRadius(B);
+				const double AboveGround = AltitudeAboveTerrain(B, S.Position, Time);
+				const double Slope = B.Terrain.MaxSlope();
+				return std::max(AboveRelief, AboveGround / std::sqrt(1.0 + Slope * Slope)) / Speed;
+			}
 			const EventSource& Source(size_t Index) const { return Sources[Index]; }
 
 			StateVector ShipAt(double Time) const
@@ -59,7 +75,7 @@ namespace Periapsis::Core
 				case PatchEnd::SoiExit:
 					return B.SphereOfInfluence - Norm(Ship);
 				case PatchEnd::Impact:
-					return Norm(Ship) - B.Radius;
+					return AltitudeAboveTerrain(B, Ship, Time);
 				case PatchEnd::SoiEntry:
 				{
 					const Vec3 Child = System.StateRelativeToParent(Src.ChildIndex, Time).Position;
@@ -133,6 +149,7 @@ namespace Periapsis::Core
 			StateVector Start;
 			double StartTime;
 			std::vector<EventSource> Sources;
+			bool bCanHitGround = false;
 		};
 	}
 
@@ -165,7 +182,7 @@ namespace Periapsis::Core
 			// steps: sampling evenly cost a second per prediction on escape or near-escape
 			// orbits, and the game predicts every frame while the engine burns.
 			const bool bRoot = !std::isfinite(B.SphereOfInfluence);
-			double Reach = B.Radius;
+			double Reach = MaxSurfaceRadius(B);
 			for (const int Child : System.Children(CurrentBody))
 			{
 				const CelestialBody& C = System.Body(Child);
@@ -254,6 +271,12 @@ namespace Periapsis::Core
 				{
 					const double Radius = Norm(Events.ShipAt(TimePrev1).Position);
 					Advance = std::max(Advance, (Radius - Reach) / MaxSpeedBeyondReach);
+				}
+				if (Events.CanHitGround())
+				{
+					// Near the relief, small enough steps not to fly through a mountain between
+					// two samples; never so small that a grazing pass stalls the search.
+					Advance = std::min(Advance, std::max(Events.SafeStepAboveGround(TimePrev1), Settings.TimeTolerance * 10.0));
 				}
 				const double Time = std::min(TimePrev1 + Advance, SearchEnd);
 				for (size_t J = 0; J < EventCount; ++J)

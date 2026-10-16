@@ -7,10 +7,11 @@ spirit of Kerbal Space Program. The orbital mechanics run in SI units and double
 Coasting is analytic ("on rails") and powered flight is integrated. Trajectories are
 predicted with patched conics across spheres of influence.
 
-**Status:** M3 of 12. You fly a ship around a planet, burn to change the orbit, time-warp up
-to 100,000x and reach the moon. Near the ship, up to 4x warp, vessels are simulated by Chaos
-in a physics bubble with a floating origin; a spent stage flies 1.5 km ahead of you at the
-start. There is no rocket building yet. See [Roadmap](#roadmap).
+**Status:** M4 of 12. You fly a ship around a planet with procedural relief, burn to change
+the orbit, time-warp up to 100,000x, reach the moon and land on either body. Near the ship, up
+to 4x warp, vessels are simulated by Chaos in a physics bubble with a floating origin, which
+turns with the planet near the ground. A spent stage flies 1.5 km ahead of you at the start.
+There is no rocket building yet. See [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -54,6 +55,7 @@ You can also run it as a standalone window:
 | `Shift` / `Ctrl` | Throttle up / down |
 | `Z` / `X` | Full throttle / cut engine |
 | `1`–`6` | Hold prograde, retrograde, normal, anti-normal, radial out, radial in |
+| `7` / `8` | Hold surface retrograde (for landing) / surface prograde |
 | `.` / `,` | Time warp up / down (at most 4x while the engine burns; above 4x the physics bubble switches off) |
 | `/` | Back to 1x |
 | Right mouse drag | Rotate the camera |
@@ -66,6 +68,15 @@ The HUD shows the current orbit (Ap, Pe, eccentricity, inclination, period) and 
 remaining delta-v. It also names the next sphere-of-influence change, shows whether the
 physics bubble is on and how far the other vessels are. Type
 `` ` `` then `stat fps` to see the frame rate.
+
+### Try it: a landing
+
+Start on the ground with `-Scenario=scenarios/landing_hop.json -CameraDistance=40` added to the
+launch command: the ship touches down, settles and shows `LANDED`. Press `5` (radial out) and
+`Z` to hop, `X` to cut, and `7` to fall back engine-first.
+
+From orbit: burn retrograde until the periapsis is well below the ground, coast, then hold `7`
+(surface retrograde) and brake so that you reach the ground below 12 m/s.
 
 ### Try it: a transfer to the moon
 
@@ -84,7 +95,7 @@ Source/
   PeriapsisSim/     Bridge to Unreal: data loading, universe, warp, unit conversion
   PeriapsisGame/    Game mode, focus-centered view, camera, HUD, input
   PeriapsisEditor/  Editor-only code and Play-In-Editor tests
-Data/               Bodies and scenarios as JSON, validated on load
+Data/               Bodies, terrain profiles and scenarios as JSON, validated on load
 Tools/CoreTests/    CMake + doctest suite for the Core, runs without Unreal
 Scripts/            Helper scripts
 Docs/               Technical specification and architecture decision records (adr/)
@@ -103,12 +114,13 @@ powershell -ExecutionPolicy Bypass -File Scripts/run-core-tests.ps1
 ```
 
 They cover Kepler solvers, universal-variable propagation, state ↔ elements conversion,
-maneuvers, patched-conic prediction, powered flight and the physics bubble's local frame. CI
-runs them on Windows and Linux on every push.
+maneuvers, patched-conic prediction, powered flight, the physics bubble's local frames,
+terrain noise, cube-sphere meshes and level-of-detail selection. CI runs them on Windows and
+Linux on every push.
 
 Integration tests use Unreal's Automation framework (prefix `Periapsis.`). They include a
-full moon transfer flown at 100,000x warp, rails/physics transitions, and Play-In-Editor tests
-that fly the bubble in Chaos:
+full moon transfer flown at 100,000x warp, rails/physics transitions, a descent from orbit to
+a landing, and Play-In-Editor tests that fly the bubble and land on the terrain in Chaos:
 
 ```bat
 "<UE_5.8>\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "%CD%\Periapsis.uproject" -ExecCmds="Automation RunTests Periapsis; Quit" -unattended -nopause -NullRHI -nosplash
@@ -124,7 +136,7 @@ The full plan is in the [technical specification](Docs/TechnicalSpecification_v0
 - [x] **M1** Orbital Core with tests
 - [x] **M2** Spherical planet, point ship with thrust, drawn orbits, warp on rails, basic map
 - [x] **M3** Physics bubble: rails-to-physics transition, floating origin, local frame
-- [ ] **M4** Spherical terrain: cube-sphere with LOD, local collision, landing
+- [x] **M4** Spherical terrain: cube-sphere with LOD, local collision, landing
 - [ ] **M5** Ships made of parts: builder, parts, tanks, engines, stages, logical structure, delta-v
 - [ ] **M6** Atmosphere and reentry: density, drag, heating, parachutes, Sky Atmosphere
 - [ ] **M7** Map and planning: full map, maneuver nodes, encounter markers, SOI transitions in the UI

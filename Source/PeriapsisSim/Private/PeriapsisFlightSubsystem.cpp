@@ -1,6 +1,8 @@
 #include "PeriapsisFlightSubsystem.h"
 
 #include "GameFramework/WorldSettings.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "PeriapsisUniverse.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPeriapsisFlight, Log, All);
@@ -37,7 +39,10 @@ void UPeriapsisFlightSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	Super::OnWorldBeginPlay(InWorld);
 	if (!Universe)
 	{
-		LoadScenario(DefaultScenario);
+		// -Scenario=scenarios/landing_hop.json picks another one from the command line.
+		FString Path = DefaultScenario;
+		FParse::Value(FCommandLine::Get(), TEXT("Scenario="), Path);
+		LoadScenario(Path);
 	}
 }
 

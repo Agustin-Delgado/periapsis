@@ -1,6 +1,7 @@
 #include "PeriapsisUniverse.h"
 
 #include "PeriapsisCore/Kepler.h"
+#include "PeriapsisCore/Surface.h"
 #include "PeriapsisPhysicsScene.h"
 
 using namespace Periapsis::Core;
@@ -38,6 +39,8 @@ void FPeriapsisUniverse::Restart()
 	Vessels.Reset();
 	FPeriapsisVessel& Ship = Vessels.AddDefaulted_GetRef();
 	Ship.Name = Scenario.ShipName;
+	Ship.Length = Scenario.ShipLength;
+	Ship.Width = Scenario.ShipDiameter;
 	Ship.Flight = MakeUnique<Flight>(System, Scenario.Ship, Scenario.StartBody, Scenario.StartState, Scenario.StartTime);
 	for (const FPeriapsisPassiveVessel& Passive : Scenario.OtherVessels)
 	{
@@ -45,11 +48,13 @@ void FPeriapsisUniverse::Restart()
 		NoEngine.DryMass = Passive.Mass;
 		FPeriapsisVessel& Vessel = Vessels.AddDefaulted_GetRef();
 		Vessel.Name = Passive.Name;
+		Vessel.Length = Passive.Size;
+		Vessel.Width = Passive.Size;
 		Vessel.Flight = MakeUnique<Flight>(System, NoEngine, Passive.StartBody, Passive.StartState, Scenario.StartTime);
 	}
 
 	CurrentTime = Scenario.StartTime;
-	Attitude = AttitudeMode::Prograde;
+	Attitude = Scenario.StartAttitude;
 	WarpLevel = 0;
 	WarpLimitReason.Reset();
 }
@@ -100,12 +105,37 @@ void FPeriapsisUniverse::ClampWarp(double RealDeltaSeconds)
 	}
 }
 
+Vec3 FPeriapsisUniverse::AttitudeFor(const Flight& F) const
+{
+	return AttitudeDirection(Attitude, F.State(), &GetSystem().Body(F.BodyIndex()));
+}
+
+void FPeriapsisUniverse::TakeOffIfThrottled()
+{
+	Flight& Active = GetFlight();
+	if (Active.Status() == FlightStatus::Landed && Active.Throttle() > 0.0 && Active.Fuel() > 0.0)
+	{
+		Active.TakeOff();
+		FPeriapsisVessel& Vessel = Vessels[ActiveVessel];
+		Vessel.RestTime = 0.0;
+		if (Vessel.bFrozen)
+		{
+			Scene->SetFrozen(ActiveVessel, false);
+			Vessel.bFrozen = false;
+		}
+	}
+}
+
 void FPeriapsisUniverse::Tick(double RealDeltaSeconds)
 {
-	if (GetFlight().Status() != FlightStatus::Flying || !(RealDeltaSeconds > 0.0))
+	if (GetFlight().Status() == FlightStatus::Crashed || !(RealDeltaSeconds > 0.0))
 	{
 		WarpLevel = 0;
 		return;
+	}
+	if (!bPhysicsActive)
+	{
+		TakeOffIfThrottled();
 	}
 	ClampWarp(RealDeltaSeconds);
 	if (bPhysicsActive || WantsPhysics())
@@ -115,7 +145,7 @@ void FPeriapsisUniverse::Tick(double RealDeltaSeconds)
 
 	CurrentTime += RealDeltaSeconds * GetWarp();
 	Flight& Active = GetFlight();
-	Active.SetThrustDirection(AttitudeDirection(Attitude, Active.State()));
+	Active.SetThrustDirection(AttitudeFor(Active));
 	for (FPeriapsisVessel& Vessel : Vessels)
 	{
 		Vessel.Flight->Advance(CurrentTime - Vessel.Flight->Time());
@@ -138,7 +168,7 @@ void FPeriapsisUniverse::SetPhysicsScene(IPeriapsisPhysicsScene* InScene)
 
 bool FPeriapsisUniverse::WantsPhysics() const
 {
-	return Scene != nullptr && WarpLevel <= MaxPhysicsWarpLevel && GetFlight().Status() == FlightStatus::Flying;
+	return Scene != nullptr && WarpLevel <= MaxPhysicsWarpLevel && GetFlight().Status() != FlightStatus::Crashed;
 }
 
 double FPeriapsisUniverse::GetPhysicsTimeDilation() const
@@ -173,14 +203,15 @@ void FPeriapsisUniverse::PhysicsStep(double Dt)
 		return;
 	}
 
-	// The frame follows the active vessel across spheres of influence.
-	Frame.ChangeBody(GetFlight().BodyIndex());
+	// The frame follows the active vessel across spheres of influence, and turns with the
+	// body near the ground.
+	UpdateFrameKind();
 
 	// Floating origin: keep the active vessel near the origin, slow in the frame.
 	if (Vessels[ActiveVessel].bPlaced)
 	{
 		const StateVector ActiveLocal = Frame.ToLocal(StateInFrameBody(Vessels[ActiveVessel]));
-		if (NeedsRebase(ActiveLocal, Bubble))
+		if (Frame.NeedsRebase(ActiveLocal, Bubble))
 		{
 			Frame.Rebase(ActiveLocal);
 			++RebaseCount;
@@ -195,17 +226,120 @@ void FPeriapsisUniverse::PhysicsStep(double Dt)
 	}
 
 	UpdateMembership();
+	TakeOffIfThrottled();
+	HandleGround(Dt);
+	if (GetFlight().Status() == FlightStatus::Crashed)
+	{
+		LeavePhysics();
+		return;
+	}
 	ApplyPhysicsForces(Dt);
 
 	CurrentTime += Dt;
 	Frame.AdvanceTo(CurrentTime);
 	// What the engine does not move this step coasts on rails (the active vessel too, burning,
-	// while its body is still joining the simulation).
+	// while its body is still joining the simulation), and landed vessels turn with the ground.
 	for (FPeriapsisVessel& Vessel : Vessels)
 	{
-		if (!Vessel.bPlaced)
+		if (!Vessel.bPlaced || Vessel.bFrozen)
 		{
 			Vessel.Flight->Advance(CurrentTime - Vessel.Flight->Time());
+		}
+	}
+}
+
+void FPeriapsisUniverse::UpdateFrameKind()
+{
+	const Flight& Active = GetFlight();
+	const CelestialBody& Body = GetSystem().Body(Active.BodyIndex());
+	const double Altitude = Norm(Active.State().Position) - Body.Radius;
+	const double Threshold = GetBodyInfo(Active.BodyIndex()).RotatingFrameAltitude;
+	const bool bBodyFixed = Frame.IsBodyFixed() ? Altitude < Threshold * RotatingFrameExitFactor : Altitude < Threshold;
+	if (bBodyFixed == Frame.IsBodyFixed() && Frame.BodyIndex() == Active.BodyIndex())
+	{
+		return;
+	}
+	// A new frame on the active vessel; every simulated body is re-expressed in it, exactly.
+	Frame = bBodyFixed ? LocalFrame::MakeBodyFixed(GetSystem(), Active.BodyIndex(), Active.State().Position, CurrentTime)
+					   : LocalFrame(GetSystem(), Active.BodyIndex(), Active.State(), CurrentTime);
+	++FrameChanges;
+	for (int32 Index = 0; Index < Vessels.Num(); ++Index)
+	{
+		if (Vessels[Index].bPlaced)
+		{
+			Scene->SetState(Index, Frame.ToLocal(StateInFrameBody(Vessels[Index])));
+		}
+	}
+}
+
+void FPeriapsisUniverse::HandleGround(double Dt)
+{
+	if (!Frame.IsBodyFixed())
+	{
+		for (FPeriapsisVessel& Vessel : Vessels)
+		{
+			Vessel.bHeldByGround = false;
+			Vessel.bTouchingGround = false;
+			Vessel.RestTime = 0.0;
+		}
+		return;
+	}
+	const CelestialBody& Body = GetSystem().Body(Frame.BodyIndex());
+	for (int32 Index = 0; Index < Vessels.Num(); ++Index)
+	{
+		FPeriapsisVessel& Vessel = Vessels[Index];
+		Vessel.bHeldByGround = false;
+		Vessel.bTouchingGround = false;
+		Flight& F = *Vessel.Flight;
+		if (!Vessel.bPlaced || Vessel.bFrozen || F.Status() != FlightStatus::Flying || F.BodyIndex() != Frame.BodyIndex())
+		{
+			continue;
+		}
+
+		// In the body-fixed frame the velocity is the velocity relative to the ground.
+		StateVector Local = Frame.ToLocal(F.State());
+		const Vec3 Up = Frame.DirectionToLocal(Normalized(F.State().Position));
+		const double Clearance = AltitudeAboveTerrain(Body, F.State().Position, F.Time()) - Vessel.GroundClearance();
+		const double Sink = -Dot(Local.Velocity, Up);
+		const bool bTouching = Clearance < GroundTolerance;
+		Vessel.bTouchingGround = bTouching;
+		const double ImpactSpeed = FMath::Max(Sink, Vessel.LastSinkSpeed);
+		Vessel.LastSinkSpeed = Sink;
+
+		if (bTouching && ImpactSpeed > CrashSpeed)
+		{
+			F.Crash();
+			RemoveFromBubble(Vessel, Index);
+			continue;
+		}
+
+		// The analytic ground: where the engine has no terrain (or let a vessel sink through it),
+		// the vessel is put back on the surface and held there.
+		const bool bBelow = Clearance < -GroundTolerance;
+		if (bBelow || (bTouching && !Scene->HasGround()))
+		{
+			if (Clearance < 0.0)
+			{
+				Local.Position = Local.Position + Up * (-Clearance);
+			}
+			const double Rising = FMath::Max(Dot(Local.Velocity, Up), 0.0);
+			Local.Velocity = Scene->HasGround() ? Local.Velocity + Up * FMath::Max(Sink, 0.0) : Up * Rising;
+			Scene->SetState(Index, Local);
+			F.SetPhysicsState(Frame.BodyIndex(), Frame.ToBody(Local), F.Time());
+			Vessel.bHeldByGround = !Scene->HasGround();
+		}
+
+		// Still on the ground long enough: landed, and asleep.
+		const bool bStill = bTouching && Norm(Local.Velocity) < RestSpeed && !F.IsThrusting();
+		Vessel.RestTime = bStill ? Vessel.RestTime + Dt : 0.0;
+		if (Vessel.RestTime >= RestDuration)
+		{
+			F.Land();
+			Scene->SetState(Index, Frame.ToLocal(F.State()));
+			Scene->SetFrozen(Index, true);
+			Vessel.bFrozen = true;
+			Vessel.bHeldByGround = false;
+			Vessel.RestTime = 0.0;
 		}
 	}
 }
@@ -215,6 +349,7 @@ void FPeriapsisUniverse::EnterPhysics()
 	FPeriapsisVessel& Active = Vessels[ActiveVessel];
 	Frame = LocalFrame(GetSystem(), Active.Flight->BodyIndex(), Active.Flight->State(), CurrentTime);
 	bPhysicsActive = true;
+	UpdateFrameKind();
 	Active.bInBubble = true;
 	Active.bPlaced = false;
 	Scene->AddVessel(ActiveVessel, Active.Flight->Mass());
@@ -238,6 +373,9 @@ void FPeriapsisUniverse::RemoveFromBubble(FPeriapsisVessel& Vessel, int32 Index)
 	Scene->RemoveVessel(Index);
 	Vessel.bInBubble = false;
 	Vessel.bPlaced = false;
+	Vessel.bFrozen = false;
+	Vessel.bHeldByGround = false;
+	Vessel.RestTime = 0.0;
 }
 
 StateVector FPeriapsisUniverse::StateInFrameBody(const FPeriapsisVessel& Vessel) const
@@ -256,10 +394,20 @@ void FPeriapsisUniverse::ReadPhysicsStates()
 		}
 		if (!Vessel.bPlaced)
 		{
-			// Joined the simulation: it takes over from the rails, at the same state.
+			// Joined the simulation: it takes over from the rails, at the same state. A landed
+			// vessel joins asleep.
 			Scene->SetState(Index, Frame.ToLocal(StateInFrameBody(Vessel)));
 			Vessel.bPlaced = true;
+			Vessel.bFrozen = Vessel.Flight->Status() == FlightStatus::Landed;
+			if (Vessel.bFrozen)
+			{
+				Scene->SetFrozen(Index, true);
+			}
 			continue;
+		}
+		if (Vessel.bFrozen)
+		{
+			continue; // landed: its flight follows the ground
 		}
 		Vessel.Flight->SetPhysicsState(Frame.BodyIndex(), Frame.ToBody(Scene->GetState(Index)), CurrentTime);
 	}
@@ -267,7 +415,7 @@ void FPeriapsisUniverse::ReadPhysicsStates()
 
 void FPeriapsisUniverse::UpdateMembership()
 {
-	const bool bActiveFlying = GetFlight().Status() == FlightStatus::Flying;
+	const bool bActiveFlying = GetFlight().Status() != FlightStatus::Crashed;
 	for (int32 Index = 0; Index < Vessels.Num(); ++Index)
 	{
 		if (Index == ActiveVessel)
@@ -275,7 +423,7 @@ void FPeriapsisUniverse::UpdateMembership()
 			continue;
 		}
 		FPeriapsisVessel& Vessel = Vessels[Index];
-		const bool bBelongs = bActiveFlying && Vessel.Flight->Status() == FlightStatus::Flying
+		const bool bBelongs = bActiveFlying && Vessel.Flight->Status() != FlightStatus::Crashed
 			&& BelongsInBubble(Vessel.bInBubble, VesselDistance(Index, ActiveVessel), Bubble);
 		if (bBelongs && !Vessel.bInBubble)
 		{
@@ -293,23 +441,35 @@ void FPeriapsisUniverse::UpdateMembership()
 void FPeriapsisUniverse::ApplyPhysicsForces(double Dt)
 {
 	Flight& Active = GetFlight();
-	Active.SetThrustDirection(AttitudeDirection(Attitude, Active.State()));
+	Active.SetThrustDirection(AttitudeFor(Active));
 	for (int32 Index = 0; Index < Vessels.Num(); ++Index)
 	{
 		FPeriapsisVessel& Vessel = Vessels[Index];
-		if (!Vessel.bPlaced)
+		if (!Vessel.bPlaced || Vessel.bFrozen)
 		{
 			continue;
 		}
-		Vec3 Acceleration = Frame.StepGravity(Frame.ToLocal(StateInFrameBody(Vessel)), Dt);
+		const StateVector Local = Frame.ToLocal(StateInFrameBody(Vessel));
+		Vec3 Acceleration = Frame.StepGravity(Local, Dt);
+		if (Vessel.bHeldByGround)
+		{
+			// The analytic ground pushes back and holds (no sliding): only what lifts the vessel acts.
+			const Vec3 Up = Frame.DirectionToLocal(Normalized(Vessel.Flight->State().Position));
+			Acceleration = Up * FMath::Max(Dot(Acceleration, Up), 0.0);
+		}
 		if (Index == ActiveVessel)
 		{
 			const double DeltaV = Vessel.Flight->BurnFor(Dt);
-			Acceleration = Acceleration + Vessel.Flight->ThrustDirection() * (DeltaV / Dt);
+			Acceleration = Acceleration + Frame.DirectionToLocal(Vessel.Flight->ThrustDirection()) * (DeltaV / Dt);
 			Scene->SetMass(Index, Vessel.Flight->Mass());
 		}
-		Scene->SetAcceleration(Index, Acceleration);
-		Scene->SetAttitude(Index, Vessel.Flight->ThrustDirection());
+		Scene->SetAcceleration(Index, Acceleration, Vessel.bTouchingGround);
+		// Attitude is held in flight; standing on the ground with the engine off, the vessel
+		// settles on its own (holding it upright on a slope makes it slide).
+		if (!Vessel.bTouchingGround || Vessel.Flight->IsThrusting())
+		{
+			Scene->SetAttitude(Index, Frame.DirectionToLocal(Vessel.Flight->ThrustDirection()));
+		}
 	}
 }
 
@@ -327,12 +487,45 @@ Vec3 FPeriapsisUniverse::VesselPosition(int32 Index) const
 Vec3 FPeriapsisUniverse::VesselPositionAt(int32 Index, double Time) const
 {
 	const Flight& F = *Vessels[Index].Flight;
+	const CelestialBody& Body = GetSystem().Body(F.BodyIndex());
+	if (F.Status() == FlightStatus::Landed)
+	{
+		const Vec3 Position = FromBodyFixed(Body, F.LandedPosition(), Time);
+		return ChangeFrame(GetSystem(), F.BodyIndex(), RootBody, {Position, GroundVelocity(Body, Position)}, Time).Position;
+	}
 	if (F.Status() != FlightStatus::Flying)
 	{
 		return VesselPosition(Index);
 	}
 	const StateVector State = PropagateKepler(F.State(), GetSystem().Body(F.BodyIndex()).Mu, Time - F.Time());
 	return ChangeFrame(GetSystem(), F.BodyIndex(), RootBody, State, Time).Position;
+}
+
+StateVector FPeriapsisUniverse::VesselLocalState(int32 Index) const
+{
+	if (!Frame.IsValid())
+	{
+		return {};
+	}
+	const Flight& F = *Vessels[Index].Flight;
+	StateVector Now = F.State();
+	if (F.Status() == FlightStatus::Flying)
+	{
+		Now = PropagateKepler(F.State(), GetSystem().Body(F.BodyIndex()).Mu, Frame.Time() - F.Time());
+	}
+	else if (F.Status() == FlightStatus::Landed)
+	{
+		const CelestialBody& Body = GetSystem().Body(F.BodyIndex());
+		Now.Position = FromBodyFixed(Body, F.LandedPosition(), Frame.Time());
+		Now.Velocity = GroundVelocity(Body, Now.Position);
+	}
+	return Frame.ToLocal(ChangeFrame(GetSystem(), F.BodyIndex(), Frame.BodyIndex(), Now, Frame.Time()));
+}
+
+double FPeriapsisUniverse::VesselAltitudeAboveTerrain(int32 Index) const
+{
+	const Flight& F = *Vessels[Index].Flight;
+	return AltitudeAboveTerrain(GetSystem().Body(F.BodyIndex()), F.State().Position, F.Time());
 }
 
 double FPeriapsisUniverse::VesselDistance(int32 A, int32 B) const

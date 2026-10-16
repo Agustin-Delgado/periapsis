@@ -110,7 +110,7 @@ so zooming in on the meshes and flying a burn on screen are still to be checked 
 
 ## Pending
 
-- The rotating frame near the surface (M4).
+- The rotating frame near the surface: done in ADR 0004.
 - Collisions between vessels work through Chaos but were not tested on screen.
 - `-ini:Engine:[SystemSettings]:r.WarnOfBadDrivers=0` skips the AMD driver dialog for local
   test launches; updating the driver is the real fix.

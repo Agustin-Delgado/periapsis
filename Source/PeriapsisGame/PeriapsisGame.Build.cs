@@ -6,6 +6,6 @@ public class PeriapsisGame : ModuleRules
 	public PeriapsisGame(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "PhysicsCore", "Chaos", "PeriapsisCore", "PeriapsisSim" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "PhysicsCore", "Chaos", "ProceduralMeshComponent", "PeriapsisCore", "PeriapsisSim" });
 	}
 }

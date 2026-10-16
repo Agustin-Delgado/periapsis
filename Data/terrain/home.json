@@ -1,0 +1,8 @@
+{
+	"_comment": "Relief of the home planet (spec 6.3): heights above the 1000 km radius, as sums of noise octaves. fbm layers go from -amplitude to +amplitude, ridged ones from 0 to +amplitude. Each octave halves the wavelength (lacunarity 2) and the amplitude (persistence 0.5).",
+	"layers": [
+		{ "type": "fbm", "amplitude_m": 2500, "wavelength_m": 400000, "octaves": 14 },
+		{ "type": "ridged", "amplitude_m": 1500, "wavelength_m": 120000, "octaves": 8 },
+		{ "type": "fbm", "amplitude_m": 15, "wavelength_m": 600, "octaves": 6 }
+	]
+}

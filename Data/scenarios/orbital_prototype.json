@@ -1,13 +1,15 @@
 {
-	"_comment": "M2/M3 prototype: a point ship in a circular parking orbit, with enough delta-v to reach the moon and come back, and a spent stage 1.5 km ahead on the same orbit (inside the physics bubble at the start).",
+	"_comment": "M2-M4 prototype: a ship in a circular parking orbit, with enough delta-v to reach the moon and come back (or to land on either body: thrust-to-weight 1.6 on home when full), and a spent stage 1.5 km ahead on the same orbit (inside the physics bubble at the start).",
 	"system": "bodies/home_system.json",
 	"start_time_s": 0,
 	"ship": {
 		"name": "Prototype",
 		"dry_mass_kg": 4000,
-		"fuel_mass_kg": 8000,
-		"thrust_n": 60000,
-		"isp_s": 350
+		"fuel_mass_kg": 9000,
+		"thrust_n": 200000,
+		"isp_s": 350,
+		"length_m": 6,
+		"diameter_m": 2
 	},
 	"start_orbit": {
 		"body": "home",
@@ -19,6 +21,7 @@
 		{
 			"name": "Spent stage",
 			"mass_kg": 1500,
+			"size_m": 3,
 			"start_orbit": {
 				"body": "home",
 				"altitude_m": 100000,

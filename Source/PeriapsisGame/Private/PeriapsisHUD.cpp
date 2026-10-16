@@ -7,9 +7,12 @@
 #include "PeriapsisCore/Kepler.h"
 #include "PeriapsisCore/OrbitalElements.h"
 #include "PeriapsisCore/Rocket.h"
+#include "PeriapsisCore/Surface.h"
 #include "PeriapsisPlayerController.h"
 #include "PeriapsisUniverse.h"
 #include "PeriapsisUniverseView.h"
+#include "EngineUtils.h"
+#include "PeriapsisTerrain.h"
 
 using namespace Periapsis::Core;
 
@@ -25,6 +28,8 @@ namespace
 		case AttitudeMode::AntiNormal: return TEXT("anti-normal");
 		case AttitudeMode::RadialOut: return TEXT("radial out");
 		case AttitudeMode::RadialIn: return TEXT("radial in");
+		case AttitudeMode::SurfacePrograde: return TEXT("surface prograde");
+		case AttitudeMode::SurfaceRetrograde: return TEXT("surface retrograde");
 		}
 		return TEXT("?");
 	}
@@ -106,10 +111,23 @@ void APeriapsisHUD::DrawHUD()
 	{
 		Lines.Add(TEXT("CRASHED  -  press R to restart"));
 	}
+	else if (ShipFlight.Status() == FlightStatus::Landed)
+	{
+		Lines.Add(TEXT("LANDED  -  throttle up to take off"));
+	}
 	Lines.Add(TEXT(""));
 	Lines.Add(FString::Printf(TEXT("Orbiting   %s"), *Universe->GetBodyInfo(ShipFlight.BodyIndex()).DisplayName));
 	Lines.Add(FString::Printf(TEXT("Altitude   %s"), *Km(Radius - Body.Radius)));
 	Lines.Add(FString::Printf(TEXT("Speed      %.1f m/s"), Norm(State.Velocity)));
+	{
+		// Relative to the ground under the ship: what matters for landing.
+		const Vec3 Up = Normalized(State.Position);
+		const Vec3 OverGround = State.Velocity - GroundVelocity(Body, State.Position);
+		const double Clearance = Universe->VesselAltitudeAboveTerrain(FPeriapsisUniverse::ActiveVessel)
+			- Universe->GetVessel(FPeriapsisUniverse::ActiveVessel).GroundClearance();
+		Lines.Add(FString::Printf(TEXT("Ground     %s below  (surface %.1f m/s, vertical %+.1f m/s)"),
+			Clearance < 10000.0 ? *FString::Printf(TEXT("%.0f m"), Clearance) : *Km(Clearance), Norm(OverGround), Dot(OverGround, Up)));
+	}
 	Lines.Add(FString::Printf(TEXT("Apoapsis   %s"), *Km(ApoapsisRadius(Elements) - Body.Radius)));
 	Lines.Add(FString::Printf(TEXT("Periapsis  %s"), *Km(PeriapsisRadius(Elements) - Body.Radius)));
 	Lines.Add(FString::Printf(TEXT("Ecc        %.4f   Inc %.2f deg"), Elements.Eccentricity, RadToDeg(Elements.Inclination)));
@@ -143,7 +161,10 @@ void APeriapsisHUD::DrawHUD()
 		const StateVector ShipNow = PropagateKepler(ShipFlight.State(), Body.Mu, Frame.Time() - ShipFlight.Time());
 		const StateVector ShipLocal = Frame.ToLocal(ChangeFrame(Universe->GetSystem(), ShipFlight.BodyIndex(), Frame.BodyIndex(),
 			ShipNow, Frame.Time()));
-		Lines.Add(FString::Printf(TEXT("Physics    bubble, %d vessel%s"), InBubble, InBubble == 1 ? TEXT("") : TEXT("s")));
+		Lines.Add(FString::Printf(TEXT("Physics    bubble, %d vessel%s, %s"), InBubble, InBubble == 1 ? TEXT("") : TEXT("s"),
+			Universe->GetLocalFrame().IsBodyFixed()
+				? *FString::Printf(TEXT("turning with %s"), *Universe->GetBodyInfo(Universe->GetLocalFrame().BodyIndex()).DisplayName)
+				: TEXT("free-falling")));
 		Lines.Add(FString::Printf(TEXT("Origin     %.0f m, %.1f m/s away  (%d rebases)"), Norm(ShipLocal.Position), Norm(ShipLocal.Velocity),
 			Universe->GetRebaseCount()));
 	}
@@ -160,6 +181,11 @@ void APeriapsisHUD::DrawHUD()
 				Other.bInBubble ? TEXT("  in bubble") : TEXT("")));
 		}
 	}
+	for (TActorIterator<APeriapsisTerrain> It(GetWorld()); It; ++It)
+	{
+		Lines.Add(FString::Printf(TEXT("Terrain    %d chunks, finest level %d, %d being built"), It->NumDrawnChunks(), It->DeepestDrawnLevel(),
+			It->NumPendingChunks()));
+	}
 	if (const APeriapsisUniverseView* View = Controller->GetUniverseView())
 	{
 		Lines.Add(TEXT(""));
@@ -172,6 +198,7 @@ void APeriapsisHUD::DrawHUD()
 		const TArray<FString> Help = {
 			TEXT("Shift / Ctrl  throttle up / down     Z / X  full / cut"),
 			TEXT("1-6  prograde, retrograde, normal, anti-normal, radial out, radial in"),
+			TEXT("7 / 8  surface retrograde (for landing) / surface prograde"),
 			TEXT(". / ,  warp up / down     /  warp 1x"),
 			TEXT("Right drag  rotate     Wheel  zoom     Tab  next focus"),
 			TEXT("R  restart     F1  hide help"),

@@ -7,7 +7,10 @@
 #include "PBDRigidsSolver.h"
 #include "Physics/Experimental/PhysScene_Chaos.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxy.h"
+#include "PeriapsisCore/Surface.h"
+#include "PeriapsisCore/TerrainMesh.h"
 #include "PeriapsisFlightSubsystem.h"
+#include "ProceduralMeshComponent.h"
 #include "PeriapsisUniverse.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UnitBridge.h"
@@ -21,11 +24,50 @@ namespace
 	const FLinearColor ShipColor(0.85f, 0.85f, 0.9f);
 	const FLinearColor OtherColor(0.8f, 0.45f, 0.2f);
 
-	FQuat NoseAlong(const Vec3& Forward)
+	FQuat NoseAlong(const FVector& Forward)
 	{
 		// The cylinder's axis is its local Z.
-		return FRotationMatrix::MakeFromZ(FUnitBridge::DirectionToUnreal(Forward)).ToQuat();
+		return FRotationMatrix::MakeFromZ(Forward).ToQuat();
 	}
+
+	// The collision ground: a square grid this fine around the vessels, rebuilt when the active
+	// vessel strays a quarter of the way to its edge, and only this close to the ground.
+	constexpr int32 GroundResolution = 33;
+	constexpr double GroundSpacing = 3.0;         // m
+	constexpr double GroundNeededBelow = 300.0;   // m of clearance
+}
+
+FVector FPeriapsisViewTransform::ToWorld(const Vec3& RootPosition) const
+{
+	if (!Frame.IsValid())
+	{
+		return FUnitBridge::ToUnreal(RootPosition - RailsOrigin);
+	}
+	return FUnitBridge::ToUnreal(Frame.ToLocal({RootPosition - FrameBodyRoot, Vec3{}}).Position + Correction);
+}
+
+Vec3 FPeriapsisViewTransform::ToRoot(const FVector& World) const
+{
+	if (!Frame.IsValid())
+	{
+		return FUnitBridge::ToSI(World) + RailsOrigin;
+	}
+	return Frame.ToBody({FUnitBridge::ToSI(World) - Correction, Vec3{}}).Position + FrameBodyRoot;
+}
+
+FVector FPeriapsisViewTransform::DirectionToWorld(const Vec3& Inertial) const
+{
+	return FUnitBridge::DirectionToUnreal(Frame.IsValid() ? Frame.DirectionToLocal(Inertial) : Inertial);
+}
+
+FQuat FPeriapsisViewTransform::BodyFixedToWorld(const CelestialBody& Body) const
+{
+	// Where the three Unreal axes of the body-fixed frame end up in the world.
+	auto Axis = [&](const FVector& UnrealAxis)
+	{
+		return DirectionToWorld(FromBodyFixed(Body, FUnitBridge::ToSI(UnrealAxis), Time));
+	};
+	return FMatrix(Axis(FVector::XAxisVector), Axis(FVector::YAxisVector), Axis(FVector::ZAxisVector), FVector::ZeroVector).ToQuat();
 }
 
 APeriapsisBubble::APeriapsisBubble()
@@ -42,6 +84,14 @@ APeriapsisBubble::APeriapsisBubble()
 	CylinderMesh = Cylinder.Object;
 	CubeMesh = Cube.Object;
 	Material = BasicMaterial.Object;
+
+	GroundPatch = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("GroundPatch"));
+	GroundPatch->SetupAttachment(RootComponent);
+	GroundPatch->SetUsingAbsoluteLocation(true);
+	GroundPatch->SetUsingAbsoluteRotation(true);
+	GroundPatch->SetHiddenInGame(true);
+	GroundPatch->bUseAsyncCooking = false; // small grid: cooking it on the spot costs a few milliseconds
+	GroundPatch->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
 }
 
 FPeriapsisUniverse* APeriapsisBubble::GetUniverse() const
@@ -92,8 +142,11 @@ void APeriapsisBubble::EnsureVesselMeshes(const FPeriapsisUniverse& Universe)
 		Mesh->SetMobility(EComponentMobility::Movable);
 		Mesh->SetUsingAbsoluteLocation(true);
 		Mesh->SetUsingAbsoluteRotation(true);
+		// Placeholder hulls from the scenario: a cylinder for the ship, cubes for the others
+		// (parts come in M5).
+		const FPeriapsisVessel& Vessel = Universe.GetVessel(Index);
 		Mesh->SetStaticMesh(bShip ? CylinderMesh : CubeMesh);
-		Mesh->SetWorldScale3D(bShip ? FVector(ShipDiameter, ShipDiameter, ShipLength) / BasicShapeSize : FVector(OtherSize / BasicShapeSize));
+		Mesh->SetWorldScale3D(FVector(Vessel.Width, Vessel.Width, Vessel.Length) / BasicShapeSize);
 		if (Material)
 		{
 			UMaterialInstanceDynamic* Instance = UMaterialInstanceDynamic::Create(Material, Mesh);
@@ -133,6 +186,7 @@ void APeriapsisBubble::Tick(float DeltaSeconds)
 		return;
 	}
 	EnsureVesselMeshes(*Universe);
+	UpdateGroundPatch(*Universe);
 
 	for (const int32 Vessel : PendingRemovals)
 	{
@@ -217,40 +271,92 @@ double APeriapsisBubble::GetRenderTime() const
 	return FMath::Clamp(ResultsTime() + UniverseMinusSim, BubbleStartTime, Universe->GetTime());
 }
 
-Vec3 APeriapsisBubble::GetRenderOrigin() const
+FPeriapsisViewTransform APeriapsisBubble::GetViewTransform() const
 {
+	FPeriapsisViewTransform View;
 	const FPeriapsisUniverse* Universe = GetUniverse();
 	if (!Universe)
 	{
-		return {};
+		return View;
 	}
-	const Vec3 Active = Universe->VesselPositionAt(FPeriapsisUniverse::ActiveVessel, GetRenderTime());
+	View.Time = GetRenderTime();
+	const Vec3 Ship = Universe->VesselPositionAt(FPeriapsisUniverse::ActiveVessel, View.Time);
+	if (!Universe->IsPhysicsActive() || !Universe->GetLocalFrame().IsValid())
+	{
+		View.RailsOrigin = Ship; // on rails the ship sits at the world origin
+		return View;
+	}
+	View.Frame = Universe->GetLocalFrame();
+	View.Frame.AdvanceTo(View.Time);
+	View.FrameBodyRoot = Universe->BodyPositionAt(View.Frame.BodyIndex(), View.Time);
 	if (IsSimulating(FPeriapsisUniverse::ActiveVessel))
 	{
 		// Anchored to where Chaos shows the ship, however it interpolates (rebases included).
-		return Active - FUnitBridge::ToSI(VesselMeshes[FPeriapsisUniverse::ActiveVessel]->GetComponentLocation());
+		const Vec3 ShipLocal = View.Frame.ToLocal({Ship - View.FrameBodyRoot, Vec3{}}).Position;
+		View.Correction = FUnitBridge::ToSI(VesselMeshes[FPeriapsisUniverse::ActiveVessel]->GetComponentLocation()) - ShipLocal;
 	}
-	return Active; // on rails the ship sits at the world origin
+	return View;
 }
 
-void APeriapsisBubble::PlaceRailsVessels()
+void APeriapsisBubble::PlaceRailsVessels(const FPeriapsisViewTransform& View)
 {
 	const FPeriapsisUniverse* Universe = GetUniverse();
 	if (!Universe || VesselMeshes.Num() != Universe->NumVessels())
 	{
 		return;
 	}
-	const double Time = GetRenderTime();
-	const Vec3 Origin = GetRenderOrigin();
 	for (int32 Index = 0; Index < VesselMeshes.Num(); ++Index)
 	{
 		if (!IsSimulating(Index))
 		{
-			const FVector Location = FUnitBridge::ToUnreal(Universe->VesselPositionAt(Index, Time) - Origin);
-			VesselMeshes[Index]->SetWorldLocationAndRotation(Location, NoseAlong(Universe->GetVessel(Index).Flight->ThrustDirection()),
-				false, nullptr, ETeleportType::TeleportPhysics);
+			const FVector Location = View.ToWorld(Universe->VesselPositionAt(Index, View.Time));
+			const FVector Nose = View.DirectionToWorld(Universe->GetVessel(Index).Flight->ThrustDirection());
+			VesselMeshes[Index]->SetWorldLocationAndRotation(Location, NoseAlong(Nose), false, nullptr, ETeleportType::TeleportPhysics);
 		}
 	}
+}
+
+void APeriapsisBubble::UpdateGroundPatch(FPeriapsisUniverse& Universe)
+{
+	const LocalFrame& Frame = Universe.GetLocalFrame();
+	const bool bNeeded = Universe.IsPhysicsActive() && Frame.IsValid() && Frame.IsBodyFixed()
+		&& Universe.VesselAltitudeAboveTerrain(FPeriapsisUniverse::ActiveVessel) < GroundNeededBelow;
+	if (!bNeeded)
+	{
+		if (GroundPatch && bGroundReady)
+		{
+			GroundPatch->ClearAllMeshSections();
+		}
+		bGroundReady = false;
+		return;
+	}
+
+	const Vec3 Active = Universe.VesselLocalState(FPeriapsisUniverse::ActiveVessel).Position;
+	const double Half = 0.5 * GroundSpacing * (GroundResolution - 1);
+	const bool bStale = !bGroundReady || GroundUniverse != &Universe || GroundRebases != Universe.GetRebaseCount()
+		|| GroundFrameChanges != Universe.GetFrameChanges() || FMath::Abs(Active.X - GroundCenter.X) > 0.25 * Half
+		|| FMath::Abs(Active.Y - GroundCenter.Y) > 0.25 * Half;
+	if (!bStale)
+	{
+		return;
+	}
+
+	const CelestialBody& Body = Universe.GetSystem().Body(Frame.BodyIndex());
+	const Periapsis::Core::GroundPatch Patch = BuildGroundPatch(Frame, Body, Active, GroundResolution, GroundSpacing);
+	TArray<FVector> Vertices;
+	Vertices.Reserve(static_cast<int32>(Patch.Positions.size()));
+	for (const Vec3& P : Patch.Positions)
+	{
+		Vertices.Add(FUnitBridge::ToUnreal(P));
+	}
+	TArray<int32> Triangles(Patch.Triangles.data(), static_cast<int32>(Patch.Triangles.size()));
+	GroundPatch->CreateMeshSection(0, Vertices, Triangles, {}, {}, {}, {}, true);
+
+	GroundCenter = Active;
+	GroundRebases = Universe.GetRebaseCount();
+	GroundFrameChanges = Universe.GetFrameChanges();
+	GroundUniverse = &Universe;
+	bGroundReady = true;
 }
 
 UStaticMeshComponent* APeriapsisBubble::GetVesselMesh(int32 Vessel) const
@@ -296,7 +402,7 @@ bool APeriapsisBubble::IsReady(int32 Vessel) const
 		return false;
 	}
 	const Chaos::FRigidBodyHandle_Internal* Handle = GetHandle(Vessel);
-	return Handle && Handle->ObjectState() == Chaos::EObjectStateType::Dynamic;
+	return Handle && (Handle->ObjectState() == Chaos::EObjectStateType::Dynamic || Handle->ObjectState() == Chaos::EObjectStateType::Sleeping);
 }
 
 StateVector APeriapsisBubble::GetState(int32 Vessel) const
@@ -323,7 +429,7 @@ void APeriapsisBubble::SetMass(int32 Vessel, double MassKg)
 	PendingMasses.Add(Vessel, MassKg);
 }
 
-void APeriapsisBubble::SetAcceleration(int32 Vessel, const Vec3& Acceleration)
+void APeriapsisBubble::SetAcceleration(int32 Vessel, const Vec3& Acceleration, bool bInContact)
 {
 	if (Chaos::FRigidBodyHandle_Internal* Handle = GetHandle(Vessel))
 	{
@@ -335,9 +441,45 @@ void APeriapsisBubble::SetAcceleration(int32 Vessel, const Vec3& Acceleration)
 		// position by a dt^2 / 2 every step under a constant acceleration: about 0.7 m over a
 		// 30 s burn. Starting the step that much behind makes the step exact.
 		const FVector AccelerationUnreal = FUnitBridge::ToUnreal(Acceleration);
-		Handle->SetX(Handle->X() - AccelerationUnreal * (0.5 * StepDt * StepDt));
+		if (!bInContact)
+		{
+			// (In contact the solver moves the body; shifting it would show up as sliding.)
+			Handle->SetX(Handle->X() - AccelerationUnreal * (0.5 * StepDt * StepDt));
+		}
 		Handle->AddForce(AccelerationUnreal * Handle->M());
+		// Infinite inertia: contacts never turn a vessel, only SetAttitude does. Without it a
+		// hull held upright fights the solver on slopes and creeps, or tips over and rolls.
+		// (Mass changes from the game thread recompute the inertia, so it is cleared every step.)
+		Handle->SetInvI(Chaos::TVec3<Chaos::FRealSingle>(0.0f));
+		Handle->SetW(FVector::ZeroVector);
 	}
+}
+
+void APeriapsisBubble::SetFrozen(int32 Vessel, bool bFrozen)
+{
+	if (Chaos::FRigidBodyHandle_Internal* Handle = GetHandle(Vessel))
+	{
+		if (bFrozen)
+		{
+			Handle->SetV(FVector::ZeroVector);
+			Handle->SetW(FVector::ZeroVector);
+		}
+		Handle->SetObjectState(bFrozen ? Chaos::EObjectStateType::Sleeping : Chaos::EObjectStateType::Dynamic);
+	}
+}
+
+bool APeriapsisBubble::HasGround() const
+{
+	// Only while the patch was built for this very frame and still lies under the ship.
+	const FPeriapsisUniverse* Universe = AttachedUniverse;
+	if (!bGroundReady || !Universe || GroundUniverse != Universe || GroundRebases != Universe->GetRebaseCount()
+		|| GroundFrameChanges != Universe->GetFrameChanges())
+	{
+		return false;
+	}
+	const Vec3 Active = Universe->VesselLocalState(FPeriapsisUniverse::ActiveVessel).Position;
+	const double Reach = 0.5 * GroundSpacing * (GroundResolution - 1) - 10.0;
+	return FMath::Abs(Active.X - GroundCenter.X) < Reach && FMath::Abs(Active.Y - GroundCenter.Y) < Reach;
 }
 
 void APeriapsisBubble::SetAttitude(int32 Vessel, const Vec3& Forward)
@@ -345,7 +487,7 @@ void APeriapsisBubble::SetAttitude(int32 Vessel, const Vec3& Forward)
 	if (Chaos::FRigidBodyHandle_Internal* Handle = GetHandle(Vessel))
 	{
 		// Perfect attitude hold until vessels have parts and reaction wheels (M5).
-		Handle->SetR(NoseAlong(Forward));
+		Handle->SetR(NoseAlong(FUnitBridge::DirectionToUnreal(Forward)));
 		Handle->SetW(FVector::ZeroVector);
 	}
 }

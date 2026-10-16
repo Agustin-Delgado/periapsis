@@ -1,5 +1,5 @@
 {
-	"_comment": "Reduced-scale home system (spec 6.2). mu = surface gravity * radius^2. Orbits relative to the parent, angles in degrees, epoch in seconds of universal time.",
+	"_comment": "Reduced-scale home system (spec 6.2). mu = surface gravity * radius^2. Bodies turn around +Z (rotation_period_s); terrain profiles are in terrain/, and below rotating_frame_altitude_m the physics bubble turns with the body. Orbits relative to the parent, angles in degrees, epoch in seconds of universal time.",
 	"bodies": [
 		{
 			"id": "home",
@@ -7,7 +7,9 @@
 			"radius_m": 1000000,
 			"surface_gravity_m_s2": 9.81,
 			"rotation_period_s": 21600,
-			"display_color": [0.18, 0.36, 0.62]
+			"display_color": [0.18, 0.36, 0.62],
+			"terrain": { "seed": 1337, "profile": "terrain/home.json" },
+			"rotating_frame_altitude_m": 20000
 		},
 		{
 			"id": "moon",
@@ -17,6 +19,8 @@
 			"surface_gravity_m_s2": 1.63,
 			"rotation_period_s": 83400,
 			"display_color": [0.55, 0.55, 0.52],
+			"terrain": { "seed": 4242, "profile": "terrain/moon.json" },
+			"rotating_frame_altitude_m": 10000,
 			"orbit": {
 				"semi_major_axis_m": 12000000,
 				"eccentricity": 0.0,

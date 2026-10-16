@@ -115,6 +115,8 @@ void APeriapsisPlayerController::PlayerTick(float DeltaTime)
 		{EKeys::Four, AttitudeMode::AntiNormal},
 		{EKeys::Five, AttitudeMode::RadialOut},
 		{EKeys::Six, AttitudeMode::RadialIn},
+		{EKeys::Seven, AttitudeMode::SurfaceRetrograde},
+		{EKeys::Eight, AttitudeMode::SurfacePrograde},
 	};
 	for (const TPair<FKey, AttitudeMode>& Binding : AttitudeKeys)
 	{

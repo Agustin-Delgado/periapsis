@@ -2,6 +2,7 @@
 
 #include "Engine/World.h"
 #include "PeriapsisBubble.h"
+#include "PeriapsisTerrain.h"
 #include "PeriapsisHUD.h"
 #include "PeriapsisMapPawn.h"
 #include "PeriapsisPlayerController.h"
@@ -20,6 +21,7 @@ void APeriapsisGameMode::BeginPlay()
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 	GetWorld()->SpawnActor<APeriapsisBubble>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	GetWorld()->SpawnActor<APeriapsisTerrain>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
 	GetWorld()->SpawnActor<APeriapsisUniverseView>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
 }
 

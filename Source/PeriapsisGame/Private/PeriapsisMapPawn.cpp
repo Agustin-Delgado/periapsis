@@ -2,6 +2,9 @@
 
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
+#include "UnitBridge.h"
 
 APeriapsisMapPawn::APeriapsisMapPawn()
 {
@@ -15,6 +18,12 @@ APeriapsisMapPawn::APeriapsisMapPawn()
 	Arm->SetUsingAbsoluteRotation(true);
 	Arm->SetRelativeRotation(FRotator(-35.0, 0.0, 0.0));
 	Arm->TargetArmLength = 5.0e8; // 5,000 km: the home planet and the parking orbit
+	// -CameraDistance=<metres> starts closer, e.g. on the ground (screenshots, landing tests).
+	double Metres = 0.0;
+	if (FParse::Value(FCommandLine::Get(), TEXT("CameraDistance="), Metres) && Metres > 0.0)
+	{
+		Arm->TargetArmLength = static_cast<float>(FUnitBridge::ToUnreal(Metres));
+	}
 
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(Arm, USpringArmComponent::SocketName);

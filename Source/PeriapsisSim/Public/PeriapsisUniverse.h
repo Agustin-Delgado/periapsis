@@ -12,8 +12,19 @@ struct FPeriapsisVessel
 {
 	FString Name;
 	TUniquePtr<Periapsis::Core::Flight> Flight;
+	// Hull, in metres: a cylinder along the thrust (the ship) or a cube (Width == Length).
+	double Length = 0.0;
+	double Width = 0.0;
 	bool bInBubble = false; // has a body in the physics scene
 	bool bPlaced = false;   // and that body is simulating, with the vessel's state
+	bool bFrozen = false;   // landed: its body rests in the scene without being simulated
+	bool bHeldByGround = false; // standing on the analytic ground (the scene has no terrain)
+	bool bTouchingGround = false; // within the ground tolerance on the last step
+	double RestTime = 0.0;     // s spent still on the ground
+	double LastSinkSpeed = 0.0; // m/s towards the ground on the previous step
+
+	// From the centre of the hull to the ground when it stands upright.
+	double GroundClearance() const { return 0.5 * Length; }
 };
 
 // The running simulation: the celestial system, the vessels and the clock.
@@ -35,6 +46,16 @@ public:
 	static constexpr int32 MaxPhysicsWarpLevel = 2; // 4x
 	// Warp is lowered so that an SOI change or an impact never comes in fewer frames than this.
 	static constexpr double MinFramesToEvent = 8.0;
+	// Touching the ground faster than this destroys a vessel (no landing legs before M5).
+	static constexpr double CrashSpeed = 12.0; // m/s
+	// A vessel this still on the ground for this long goes to sleep as landed (spec 5.10).
+	static constexpr double RestSpeed = 0.05;   // m/s, relative to the ground
+	static constexpr double RestDuration = 1.0; // s
+	// Contact with the ground is judged with this slack: the collision mesh is not the
+	// analytic terrain exactly.
+	static constexpr double GroundTolerance = 0.5; // m
+	// The bubble leaves the body-fixed frame this far above the altitude where it enters it.
+	static constexpr double RotatingFrameExitFactor = 1.25;
 	static constexpr int32 ActiveVessel = 0;
 
 	explicit FPeriapsisUniverse(FPeriapsisScenario InScenario);
@@ -60,8 +81,12 @@ public:
 	// The time scale the physics engine must run at: the warp while in the bubble.
 	double GetPhysicsTimeDilation() const;
 	const Periapsis::Core::LocalFrame& GetLocalFrame() const { return Frame; }
+	// A vessel's state in the local frame now (on rails too: then it is only informative).
+	Periapsis::Core::StateVector VesselLocalState(int32 Index) const;
 	const Periapsis::Core::BubbleSettings& GetBubbleSettings() const { return Bubble; }
 	int32 GetRebaseCount() const { return RebaseCount; }
+	// How many times the bubble switched between free-falling and body-fixed (or of body).
+	int32 GetFrameChanges() const { return FrameChanges; }
 
 	// Controls.
 	void SetThrottle(double Throttle);
@@ -97,6 +122,8 @@ public:
 	Periapsis::Core::Vec3 VesselPositionAt(int32 Index, double Time) const;
 	// Distance between two vessels, in metres.
 	double VesselDistance(int32 A, int32 B) const;
+	// Height of a vessel's centre above the ground under it, in metres.
+	double VesselAltitudeAboveTerrain(int32 Index) const;
 	// Time until the next SOI change or impact on the predicted trajectory (infinite if none).
 	double TimeToNextEvent();
 
@@ -108,6 +135,10 @@ private:
 	void ReadPhysicsStates();
 	void UpdateMembership();
 	void ApplyPhysicsForces(double Dt);
+	void UpdateFrameKind();
+	void HandleGround(double Dt);
+	void TakeOffIfThrottled();
+	Periapsis::Core::Vec3 AttitudeFor(const Periapsis::Core::Flight& Flight) const;
 	void RemoveFromBubble(FPeriapsisVessel& Vessel, int32 Index);
 	// A vessel's state in the local frame's body.
 	Periapsis::Core::StateVector StateInFrameBody(const FPeriapsisVessel& Vessel) const;
@@ -124,4 +155,5 @@ private:
 	Periapsis::Core::LocalFrame Frame;
 	Periapsis::Core::BubbleSettings Bubble;
 	int32 RebaseCount = 0;
+	int32 FrameChanges = 0;
 };

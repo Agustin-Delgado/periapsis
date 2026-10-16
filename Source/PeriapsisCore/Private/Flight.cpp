@@ -4,14 +4,30 @@
 #include "PeriapsisCore/Kepler.h"
 #include "PeriapsisCore/Maneuver.h"
 #include "PeriapsisCore/Rocket.h"
+#include "PeriapsisCore/Surface.h"
 
 #include <algorithm>
 #include <cmath>
 
 namespace Periapsis::Core
 {
-	Vec3 AttitudeDirection(AttitudeMode Mode, const StateVector& State)
+	Vec3 AttitudeDirection(AttitudeMode Mode, const StateVector& State, const CelestialBody* Body)
 	{
+		constexpr double MinSpeedForDirection = 0.5; // m/s
+		const Vec3 Up = Normalized(State.Position);
+		if (Mode == AttitudeMode::SurfacePrograde || Mode == AttitudeMode::SurfaceRetrograde)
+		{
+			const Vec3 Relative = Body ? State.Velocity - GroundVelocity(*Body, State.Position) : State.Velocity;
+			if (Norm(Relative) < MinSpeedForDirection)
+			{
+				return Up;
+			}
+			return Mode == AttitudeMode::SurfacePrograde ? Normalized(Relative) : -Normalized(Relative);
+		}
+		if (Norm(State.Velocity) < MinSpeedForDirection)
+		{
+			return Up;
+		}
 		const ManeuverBasis Basis = ComputeManeuverBasis(State);
 		switch (Mode)
 		{
@@ -27,6 +43,9 @@ namespace Periapsis::Core
 			return Basis.RadialOut;
 		case AttitudeMode::RadialIn:
 			return -Basis.RadialOut;
+		case AttitudeMode::SurfacePrograde:
+		case AttitudeMode::SurfaceRetrograde:
+			break;
 		}
 		return Basis.Prograde;
 	}
@@ -75,6 +94,12 @@ namespace Periapsis::Core
 
 	void Flight::Advance(double DeltaTime)
 	{
+		if (CurrentStatus == FlightStatus::Landed && DeltaTime > 0.0)
+		{
+			CurrentTime += DeltaTime;
+			FollowGround();
+			return;
+		}
 		if (CurrentStatus != FlightStatus::Flying || !(DeltaTime > 0.0))
 		{
 			return;
@@ -100,7 +125,7 @@ namespace Periapsis::Core
 		CurrentState = InState;
 		CurrentTime = InTime;
 
-		if (Norm(CurrentState.Position) <= SystemRef.Body(CurrentBody).Radius)
+		if (AltitudeAboveTerrain(SystemRef.Body(CurrentBody), CurrentState.Position, CurrentTime) < -kFellThroughDepth)
 		{
 			CurrentStatus = FlightStatus::Crashed;
 			ThrottleValue = 0.0;
@@ -144,6 +169,43 @@ namespace Periapsis::Core
 		Patches.clear();
 		bPatchesValid = false;
 		return RocketDeltaV(Config.IspSeconds, StartMass, Mass());
+	}
+
+	void Flight::Land()
+	{
+		if (CurrentStatus != FlightStatus::Flying)
+		{
+			return;
+		}
+		CurrentStatus = FlightStatus::Landed;
+		ThrottleValue = 0.0;
+		LandedAt = ToBodyFixed(SystemRef.Body(CurrentBody), CurrentState.Position, CurrentTime);
+		Patches.clear();
+		bPatchesValid = false;
+		FollowGround();
+	}
+
+	void Flight::TakeOff()
+	{
+		if (CurrentStatus == FlightStatus::Landed)
+		{
+			CurrentStatus = FlightStatus::Flying;
+		}
+	}
+
+	void Flight::Crash()
+	{
+		CurrentStatus = FlightStatus::Crashed;
+		ThrottleValue = 0.0;
+		Patches.clear();
+		bPatchesValid = false;
+	}
+
+	void Flight::FollowGround()
+	{
+		const CelestialBody& Body = SystemRef.Body(CurrentBody);
+		CurrentState.Position = FromBodyFixed(Body, LandedAt, CurrentTime);
+		CurrentState.Velocity = GroundVelocity(Body, CurrentState.Position);
 	}
 
 	const std::vector<TrajectoryPatch>& Flight::Trajectory()
@@ -245,7 +307,7 @@ namespace Periapsis::Core
 			CurrentTime += Dt;
 			FuelLeft = bBurnsOut ? 0.0 : FuelLeft - Flow * Dt;
 
-			if (Norm(CurrentState.Position) <= SystemRef.Body(CurrentBody).Radius)
+			if (AltitudeAboveTerrain(SystemRef.Body(CurrentBody), CurrentState.Position, CurrentTime) <= 0.0)
 			{
 				CurrentStatus = FlightStatus::Crashed;
 				ThrottleValue = 0.0;
