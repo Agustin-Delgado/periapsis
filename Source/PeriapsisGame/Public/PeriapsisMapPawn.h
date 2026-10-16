@@ -20,6 +20,7 @@ public:
 	// Multiplies the camera distance, staying outside MinDistance (Unreal units).
 	void Zoom(double Factor, double MinDistance);
 	double GetDistance() const;
+	void SetDistance(double Distance);
 
 	static constexpr double MaxDistance = 1.0e11; // 1,000,000 km
 

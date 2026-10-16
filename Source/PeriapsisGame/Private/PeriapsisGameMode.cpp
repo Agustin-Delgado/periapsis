@@ -2,6 +2,7 @@
 
 #include "Engine/World.h"
 #include "PeriapsisBubble.h"
+#include "PeriapsisBuilderView.h"
 #include "PeriapsisTerrain.h"
 #include "PeriapsisHUD.h"
 #include "PeriapsisMapPawn.h"
@@ -23,6 +24,7 @@ void APeriapsisGameMode::BeginPlay()
 	GetWorld()->SpawnActor<APeriapsisBubble>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
 	GetWorld()->SpawnActor<APeriapsisTerrain>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
 	GetWorld()->SpawnActor<APeriapsisUniverseView>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	GetWorld()->SpawnActor<APeriapsisBuilderView>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
 }
 
 void APeriapsisGameMode::RestartPlayer(AController* NewPlayer)

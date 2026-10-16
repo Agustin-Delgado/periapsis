@@ -43,6 +43,11 @@ void APeriapsisMapPawn::Zoom(double Factor, double MinDistance)
 	Arm->TargetArmLength = static_cast<float>(FMath::Clamp(Arm->TargetArmLength * Factor, FMath::Max(MinDistance, 1000.0), MaxDistance));
 }
 
+void APeriapsisMapPawn::SetDistance(double Distance)
+{
+	Arm->TargetArmLength = static_cast<float>(FMath::Clamp(Distance, 1000.0, MaxDistance));
+}
+
 double APeriapsisMapPawn::GetDistance() const
 {
 	return Arm->TargetArmLength;

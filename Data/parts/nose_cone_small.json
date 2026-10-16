@@ -1,0 +1,18 @@
+{
+	"id": "nose_cone_small",
+	"name": "Small nose cone",
+	"category": "structure",
+	"dry_mass_kg": 60,
+	"cost": 150,
+	"geometry": { "shape": "frustum", "length_m": 1.2, "bottom_radius_m": 0.625, "top_radius_m": 0.0 },
+	"attach_nodes": [
+		{
+			"id": "bottom",
+			"pos": [0, 0, -0.6],
+			"dir": [0, 0, -1],
+			"size": 1
+		}
+	],
+	"joint_strength": { "force_n": 200000, "torque_nm": 100000 },
+	"modules": []
+}

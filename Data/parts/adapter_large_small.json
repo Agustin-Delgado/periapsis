@@ -1,0 +1,24 @@
+{
+	"id": "adapter_large_small",
+	"name": "Large to small adapter",
+	"category": "structure",
+	"dry_mass_kg": 150,
+	"cost": 300,
+	"geometry": { "shape": "frustum", "length_m": 1.0, "bottom_radius_m": 1.25, "top_radius_m": 0.625 },
+	"attach_nodes": [
+		{
+			"id": "top",
+			"pos": [0, 0, 0.5],
+			"dir": [0, 0, 1],
+			"size": 1
+		},
+		{
+			"id": "bottom",
+			"pos": [0, 0, -0.5],
+			"dir": [0, 0, -1],
+			"size": 2
+		}
+	],
+	"joint_strength": { "force_n": 3000000, "torque_nm": 1500000 },
+	"modules": []
+}

@@ -2,6 +2,7 @@
 
 #include "Dom/JsonObject.h"
 #include "Algo/Find.h"
+#include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "PeriapsisCore/Constants.h"
@@ -9,6 +10,7 @@
 #include "PeriapsisCore/Surface.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 
 namespace
 {
@@ -128,9 +130,9 @@ namespace
 	}
 
 	// Above the ground: body, latitude, longitude, height of the ship's base over the terrain and
-	// vertical speed, moving with the ground otherwise. For landing tests and short hops.
-	void ParseStartSurface(const FJsonObject& O, const FPeriapsisSystemData& SystemData, double StartTime, double Clearance, int32& OutBody,
-		StateVector& OutState, TArray<FString>& OutErrors)
+	// vertical speed, moving with the ground otherwise. For launches, landing tests and hops.
+	void ParseStartSurface(const FJsonObject& O, const FPeriapsisSystemData& SystemData, int32& OutBody, FPeriapsisSurfaceStart& OutStart,
+		TArray<FString>& OutErrors)
 	{
 		const FString Where = TEXT("start_surface");
 		FString BodyId;
@@ -152,13 +154,7 @@ namespace
 			OutErrors.Add(FString::Printf(TEXT("%s: latitude must be within +-90 and height not negative"), *Where));
 			return;
 		}
-		const CelestialBody& Body = SystemData.System.Body(OutBody);
-		const double Lat = DegToRad(Latitude);
-		const double Lon = DegToRad(Longitude);
-		const Vec3 Up{FMath::Cos(Lat) * FMath::Cos(Lon), FMath::Cos(Lat) * FMath::Sin(Lon), FMath::Sin(Lat)};
-		const double Radius = Body.Radius + Body.Terrain.Height(Up) + Clearance + Height;
-		const Vec3 Position = FromBodyFixed(Body, Up * Radius, StartTime);
-		OutState = {Position, GroundVelocity(Body, Position) + Normalized(Position) * VerticalSpeed};
+		OutStart = {Latitude, Longitude, Height, VerticalSpeed};
 	}
 
 	// A circular orbit: body, altitude, inclination and true anomaly at the scenario start.
@@ -197,6 +193,516 @@ namespace
 		Circular.Epoch = StartTime;
 		OutState = ElementsToState(Circular, Body.Mu);
 	}
+	bool ReadVector(const FJsonObject& Object, const TCHAR* Field, const FString& Where, Vec3& Out, TArray<FString>& OutErrors)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+		if (!Object.TryGetArrayField(Field, Values) || Values->Num() != 3)
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: '%s' needs 3 numbers"), *Where, Field));
+			return false;
+		}
+		Out = {(*Values)[0]->AsNumber(), (*Values)[1]->AsNumber(), (*Values)[2]->AsNumber()};
+		return true;
+	}
+
+	int ResourceIndex(const PartCatalog& Catalog, const FString& Id, const FString& Where, TArray<FString>& OutErrors)
+	{
+		const int Index = Catalog.FindResource(TCHAR_TO_UTF8(*Id));
+		if (Index < 0)
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: unknown resource '%s'"), *Where, *Id));
+		}
+		return Index;
+	}
+
+	// The side of a part as a design file names it.
+	constexpr const TCHAR* SurfaceNode = TEXT("surface");
+}
+
+bool PeriapsisData::ParsePart(const FString& Json, const PartCatalog& Resources, PartDefinition& Out, TArray<FString>& OutErrors)
+{
+	const int32 ErrorsBefore = OutErrors.Num();
+	const TSharedPtr<FJsonObject> Root = ParseObject(Json, TEXT("part"), OutErrors);
+	if (!Root)
+	{
+		return false;
+	}
+	PartDefinition Part;
+	FString Id, Name, Category;
+	if (!Root->TryGetStringField(TEXT("id"), Id) || Id.IsEmpty())
+	{
+		OutErrors.Add(TEXT("part: missing 'id'"));
+		return false;
+	}
+	const FString Where = FString::Printf(TEXT("part '%s'"), *Id);
+	Root->TryGetStringField(TEXT("name"), Name);
+	Root->TryGetStringField(TEXT("category"), Category);
+	Part.Id = TCHAR_TO_UTF8(*Id);
+	Part.Name = TCHAR_TO_UTF8(*(Name.IsEmpty() ? Id : Name));
+	Part.Category = TCHAR_TO_UTF8(*Category);
+	ReadNumber(*Root, TEXT("dry_mass_kg"), Where, Part.DryMass, OutErrors);
+	Root->TryGetNumberField(TEXT("cost"), Part.Cost);
+	Root->TryGetBoolField(TEXT("surface_attach"), Part.bSurfaceAttach);
+
+	const TSharedPtr<FJsonObject>* Geometry = nullptr;
+	if (Root->TryGetObjectField(TEXT("geometry"), Geometry))
+	{
+		const FJsonObject& G = **Geometry;
+		FString Shape;
+		G.TryGetStringField(TEXT("shape"), Shape);
+		ReadNumber(G, TEXT("length_m"), Where, Part.Geometry.Length, OutErrors);
+		if (Shape == TEXT("frustum"))
+		{
+			Part.Geometry.Shape = PartGeometry::EShape::Frustum;
+			ReadNumber(G, TEXT("bottom_radius_m"), Where, Part.Geometry.BottomRadius, OutErrors);
+			ReadNumber(G, TEXT("top_radius_m"), Where, Part.Geometry.TopRadius, OutErrors);
+		}
+		else if (Shape == TEXT("box"))
+		{
+			Part.Geometry.Shape = PartGeometry::EShape::Box;
+			ReadNumber(G, TEXT("width_m"), Where, Part.Geometry.Width, OutErrors);
+		}
+		else
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: geometry 'shape' must be 'frustum' or 'box' (got '%s')"), *Where, *Shape));
+		}
+	}
+	else
+	{
+		OutErrors.Add(FString::Printf(TEXT("%s: missing 'geometry'"), *Where));
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* Nodes = nullptr;
+	if (Root->TryGetArrayField(TEXT("attach_nodes"), Nodes))
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Nodes)
+		{
+			const TSharedPtr<FJsonObject>* NodeObject = nullptr;
+			if (!Value->TryGetObject(NodeObject))
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: attach nodes must be objects"), *Where));
+				continue;
+			}
+			AttachNode Node;
+			FString NodeId;
+			(*NodeObject)->TryGetStringField(TEXT("id"), NodeId);
+			Node.Id = TCHAR_TO_UTF8(*NodeId);
+			ReadVector(**NodeObject, TEXT("pos"), Where, Node.Position, OutErrors);
+			ReadVector(**NodeObject, TEXT("dir"), Where, Node.Direction, OutErrors);
+			(*NodeObject)->TryGetNumberField(TEXT("size"), Node.Size);
+			Part.Nodes.push_back(Node);
+		}
+	}
+
+	const TSharedPtr<FJsonObject>* Joint = nullptr;
+	if (Root->TryGetObjectField(TEXT("joint_strength"), Joint))
+	{
+		ReadNumber(**Joint, TEXT("force_n"), Where, Part.JointForce, OutErrors);
+		ReadNumber(**Joint, TEXT("torque_nm"), Where, Part.JointTorque, OutErrors);
+	}
+	else
+	{
+		OutErrors.Add(FString::Printf(TEXT("%s: missing 'joint_strength'"), *Where));
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* ResourceValues = nullptr;
+	if (Root->TryGetArrayField(TEXT("resources"), ResourceValues))
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *ResourceValues)
+		{
+			const TSharedPtr<FJsonObject>* ResourceObject = nullptr;
+			FString ResourceId;
+			double Mass = 0.0;
+			if (!Value->TryGetObject(ResourceObject) || !(*ResourceObject)->TryGetStringField(TEXT("resource"), ResourceId)
+				|| !(*ResourceObject)->TryGetNumberField(TEXT("mass_kg"), Mass))
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: resources need 'resource' and 'mass_kg'"), *Where));
+				continue;
+			}
+			Part.Resources.push_back({ResourceIndex(Resources, ResourceId, Where, OutErrors), Mass});
+		}
+	}
+
+	const TArray<TSharedPtr<FJsonValue>>* Modules = nullptr;
+	if (Root->TryGetArrayField(TEXT("modules"), Modules))
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *Modules)
+		{
+			const TSharedPtr<FJsonObject>* ModuleObject = nullptr;
+			FString Type;
+			if (!Value->TryGetObject(ModuleObject) || !(*ModuleObject)->TryGetStringField(TEXT("type"), Type))
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: modules need a 'type'"), *Where));
+				continue;
+			}
+			const FJsonObject& M = **ModuleObject;
+			if (Type == TEXT("Engine"))
+			{
+				EngineModule Engine;
+				ReadNumber(M, TEXT("thrust_vac_n"), Where, Engine.ThrustVacuum, OutErrors);
+				ReadNumber(M, TEXT("isp_vac_s"), Where, Engine.IspVacuum, OutErrors);
+				ReadNumber(M, TEXT("isp_sl_s"), Where, Engine.IspSeaLevel, OutErrors);
+				M.TryGetNumberField(TEXT("gimbal_deg"), Engine.GimbalDegrees);
+				const TSharedPtr<FJsonObject>* Propellants = nullptr;
+				if (M.TryGetObjectField(TEXT("propellants"), Propellants))
+				{
+					for (const TPair<FString, TSharedPtr<FJsonValue>>& Entry : (*Propellants)->Values)
+					{
+						Engine.Propellants.push_back({ResourceIndex(Resources, Entry.Key, Where, OutErrors), Entry.Value->AsNumber()});
+					}
+				}
+				else
+				{
+					OutErrors.Add(FString::Printf(TEXT("%s: the engine needs 'propellants' (resource: share of the mass flow)"), *Where));
+				}
+				Part.Engine = Engine;
+			}
+			else if (Type == TEXT("Decoupler"))
+			{
+				DecouplerModule Decoupler;
+				M.TryGetNumberField(TEXT("ejection_impulse_ns"), Decoupler.EjectionImpulse);
+				M.TryGetBoolField(TEXT("crossfeed"), Decoupler.bCrossfeed);
+				Part.Decoupler = Decoupler;
+			}
+			else if (Type == TEXT("Command"))
+			{
+				Part.bCommand = true;
+			}
+			else
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: unknown module type '%s'"), *Where, *Type));
+			}
+		}
+	}
+
+	if (OutErrors.Num() > ErrorsBefore)
+	{
+		return false;
+	}
+	Out = MoveTemp(Part);
+	return true;
+}
+
+bool PeriapsisData::LoadPartCatalog(const FString& DataRoot, PartCatalog& Out, TArray<FString>& OutErrors)
+{
+	const int32 ErrorsBefore = OutErrors.Num();
+	const FString PartsDirectory = FPaths::Combine(DataRoot, TEXT("parts"));
+	PartCatalog Result;
+
+	FString ResourcesJson;
+	if (!FFileHelper::LoadFileToString(ResourcesJson, *FPaths::Combine(PartsDirectory, TEXT("resources.json"))))
+	{
+		OutErrors.Add(TEXT("parts: cannot read parts/resources.json"));
+		return false;
+	}
+	const TSharedPtr<FJsonObject> ResourcesRoot = ParseObject(ResourcesJson, TEXT("parts/resources.json"), OutErrors);
+	const TArray<TSharedPtr<FJsonValue>>* ResourceValues = nullptr;
+	if (!ResourcesRoot || !ResourcesRoot->TryGetArrayField(TEXT("resources"), ResourceValues))
+	{
+		OutErrors.Add(TEXT("parts/resources.json: missing 'resources'"));
+		return false;
+	}
+	for (const TSharedPtr<FJsonValue>& Value : *ResourceValues)
+	{
+		const TSharedPtr<FJsonObject>* Object = nullptr;
+		FString Id, Name;
+		if (!Value->TryGetObject(Object) || !(*Object)->TryGetStringField(TEXT("id"), Id))
+		{
+			OutErrors.Add(TEXT("parts/resources.json: every resource needs an 'id'"));
+			continue;
+		}
+		(*Object)->TryGetStringField(TEXT("name"), Name);
+		Result.ResourceTypes.push_back({TCHAR_TO_UTF8(*Id), TCHAR_TO_UTF8(*(Name.IsEmpty() ? Id : Name))});
+	}
+
+	TArray<FString> Files;
+	IFileManager::Get().FindFiles(Files, *FPaths::Combine(PartsDirectory, TEXT("*.json")), true, false);
+	Files.Sort(); // the same catalog order on every machine
+	for (const FString& File : Files)
+	{
+		if (File == TEXT("resources.json"))
+		{
+			continue;
+		}
+		FString Json;
+		if (!FFileHelper::LoadFileToString(Json, *FPaths::Combine(PartsDirectory, File)))
+		{
+			OutErrors.Add(FString::Printf(TEXT("parts: cannot read %s"), *File));
+			continue;
+		}
+		PartDefinition Part;
+		TArray<FString> PartErrors;
+		if (ParsePart(Json, Result, Part, PartErrors))
+		{
+			if (FString(UTF8_TO_TCHAR(Part.Id.c_str())) + TEXT(".json") != File)
+			{
+				OutErrors.Add(FString::Printf(TEXT("parts/%s: the file must be named after the part's id"), *File));
+			}
+			Result.Parts.push_back(MoveTemp(Part));
+		}
+		for (const FString& Error : PartErrors)
+		{
+			OutErrors.Add(FString::Printf(TEXT("parts/%s: %s"), *File, *Error));
+		}
+	}
+	for (const std::string& Error : Result.Validate())
+	{
+		OutErrors.Add(FString::Printf(TEXT("parts: %s"), UTF8_TO_TCHAR(Error.c_str())));
+	}
+	if (OutErrors.Num() > ErrorsBefore)
+	{
+		return false;
+	}
+	Out = MoveTemp(Result);
+	return true;
+}
+
+bool PeriapsisData::ParseDesign(const FString& Json, const PartCatalog& Catalog, VesselDesign& Out, TArray<FString>& OutErrors)
+{
+	const int32 ErrorsBefore = OutErrors.Num();
+	const TSharedPtr<FJsonObject> Root = ParseObject(Json, TEXT("design"), OutErrors);
+	const TArray<TSharedPtr<FJsonValue>>* Entries = nullptr;
+	if (!Root || !Root->TryGetArrayField(TEXT("parts"), Entries) || Entries->IsEmpty())
+	{
+		OutErrors.Add(TEXT("design: 'parts' must be a non-empty array"));
+		return false;
+	}
+	VesselDesign Result;
+	FString DesignName;
+	Root->TryGetStringField(TEXT("name"), DesignName);
+	Result.Name = TCHAR_TO_UTF8(*DesignName);
+
+	// Each entry may stand for several instances (symmetry): its id maps to all of them.
+	TMap<FString, TArray<int32>> InstancesById;
+	TMap<int32, TArray<int32>> SavedGroups; // symmetry groups of a saved design: their instances
+	for (int32 Index = 0; Index < Entries->Num(); ++Index)
+	{
+		const TSharedPtr<FJsonObject>* EntryObject = nullptr;
+		if (!(*Entries)[Index]->TryGetObject(EntryObject))
+		{
+			OutErrors.Add(FString::Printf(TEXT("design parts[%d]: not an object"), Index));
+			return false;
+		}
+		const FJsonObject& E = **EntryObject;
+		FString Id, PartId;
+		E.TryGetStringField(TEXT("id"), Id);
+		E.TryGetStringField(TEXT("part"), PartId);
+		const FString Where = FString::Printf(TEXT("design part '%s'"), *Id);
+		if (Id.IsEmpty() || InstancesById.Contains(Id))
+		{
+			OutErrors.Add(FString::Printf(TEXT("design parts[%d]: missing or duplicate 'id'"), Index));
+			return false;
+		}
+		const int Part = Catalog.FindPart(TCHAR_TO_UTF8(*PartId));
+		if (Part < 0)
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: unknown part '%s'"), *Where, *PartId));
+			return false;
+		}
+
+		TArray<int32> Added;
+		FString ParentId;
+		if (!E.TryGetStringField(TEXT("parent"), ParentId))
+		{
+			if (Index != 0)
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: only the first part has no parent"), *Where));
+				return false;
+			}
+			Result.SetRoot(Catalog, Part);
+			Added.Add(0);
+		}
+		else
+		{
+			const TArray<int32>* Parents = InstancesById.Find(ParentId);
+			if (!Parents)
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: parent '%s' must be listed before it"), *Where, *ParentId));
+				return false;
+			}
+			Attachment How;
+			FString Node;
+			E.TryGetStringField(TEXT("node"), Node);
+			How.Node = Node == SurfaceNode ? std::string() : std::string(TCHAR_TO_UTF8(*Node));
+			const TSharedPtr<FJsonObject>* Surface = nullptr;
+			FString ParentNode;
+			if (E.TryGetObjectField(TEXT("surface"), Surface))
+			{
+				double Angle = 0.0;
+				(*Surface)->TryGetNumberField(TEXT("angle_deg"), Angle);
+				(*Surface)->TryGetNumberField(TEXT("height_m"), How.SurfaceHeight);
+				How.SurfaceAngle = DegToRad(Angle);
+			}
+			else if (E.TryGetStringField(TEXT("parent_node"), ParentNode))
+			{
+				How.ParentNode = TCHAR_TO_UTF8(*ParentNode);
+			}
+			else
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: needs 'parent_node' or 'surface'"), *Where));
+				return false;
+			}
+			if (Node.IsEmpty())
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: needs 'node' (one of its nodes, or 'surface')"), *Where));
+				return false;
+			}
+			double Roll = 0.0;
+			E.TryGetNumberField(TEXT("roll_deg"), Roll);
+			How.Roll = DegToRad(Roll);
+			double Symmetry = 1.0;
+			E.TryGetNumberField(TEXT("symmetry"), Symmetry);
+			if (Symmetry < 1.0 || Symmetry > 16.0 || Symmetry != FMath::RoundToDouble(Symmetry))
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: 'symmetry' must be a whole number from 1 to 16"), *Where));
+				return false;
+			}
+			const std::vector<int> NewInstances = Result.Attach(Catalog, (*Parents)[0], How, Part, static_cast<int>(Symmetry));
+			if (NewInstances.empty())
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: cannot attach it to '%s' that way (unknown or taken node)"), *Where, *ParentId));
+				return false;
+			}
+			Added.Append(NewInstances.data(), static_cast<int32>(NewInstances.size()));
+		}
+
+		double Stage = -1.0, Priority = 0.0, Group = -1.0;
+		E.TryGetNumberField(TEXT("stage"), Stage);
+		E.TryGetNumberField(TEXT("flow_priority"), Priority);
+		for (const int32 Instance : Added)
+		{
+			Result.SetStage(Instance, static_cast<int>(Stage));
+			Result.SetFlowPriority(Instance, static_cast<int>(Priority));
+		}
+		if (E.TryGetNumberField(TEXT("symmetry_group"), Group) && Added.Num() == 1)
+		{
+			// A saved design lists symmetry copies one by one. They go back in one group at the
+			// end: a group now would make the next copy's children land on every member.
+			SavedGroups.FindOrAdd(static_cast<int32>(Group)).Add(Added[0]);
+		}
+		InstancesById.Add(Id, MoveTemp(Added));
+	}
+
+	for (const TPair<int32, TArray<int32>>& Group : SavedGroups)
+	{
+		for (int32 Member = 1; Member < Group.Value.Num(); ++Member)
+		{
+			Result.JoinSymmetryGroup(Group.Value[Member], Group.Value[0]);
+		}
+	}
+	for (const std::string& Error : Result.Validate(Catalog))
+	{
+		OutErrors.Add(FString::Printf(TEXT("design: %s"), UTF8_TO_TCHAR(Error.c_str())));
+	}
+	if (OutErrors.Num() > ErrorsBefore)
+	{
+		return false;
+	}
+	Out = MoveTemp(Result);
+	return true;
+}
+
+FString PeriapsisData::SerializeDesign(const VesselDesign& Design, const PartCatalog& Catalog)
+{
+	const TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+	Root->SetStringField(TEXT("name"), UTF8_TO_TCHAR(Design.Name.c_str()));
+	TArray<TSharedPtr<FJsonValue>> Entries;
+	for (int32 Index = 0; Index < static_cast<int32>(Design.Parts().size()); ++Index)
+	{
+		const PartInstance& Instance = Design.Parts()[Index];
+		const TSharedRef<FJsonObject> E = MakeShared<FJsonObject>();
+		E->SetStringField(TEXT("id"), FString::Printf(TEXT("p%d"), Index));
+		E->SetStringField(TEXT("part"), UTF8_TO_TCHAR(Catalog.Parts[Instance.Part].Id.c_str()));
+		if (Instance.Parent >= 0)
+		{
+			const Attachment& How = Instance.Attach;
+			E->SetStringField(TEXT("parent"), FString::Printf(TEXT("p%d"), Instance.Parent));
+			if (How.ParentNode.empty())
+			{
+				const TSharedRef<FJsonObject> Surface = MakeShared<FJsonObject>();
+				Surface->SetNumberField(TEXT("angle_deg"), RadToDeg(How.SurfaceAngle));
+				Surface->SetNumberField(TEXT("height_m"), How.SurfaceHeight);
+				E->SetObjectField(TEXT("surface"), Surface);
+			}
+			else
+			{
+				E->SetStringField(TEXT("parent_node"), UTF8_TO_TCHAR(How.ParentNode.c_str()));
+			}
+			E->SetStringField(TEXT("node"), How.Node.empty() ? FString(SurfaceNode) : FString(UTF8_TO_TCHAR(How.Node.c_str())));
+			if (How.Roll != 0.0)
+			{
+				E->SetNumberField(TEXT("roll_deg"), RadToDeg(How.Roll));
+			}
+		}
+		if (Instance.Stage >= 0)
+		{
+			E->SetNumberField(TEXT("stage"), Instance.Stage);
+		}
+		if (Instance.FlowPriority != 0)
+		{
+			E->SetNumberField(TEXT("flow_priority"), Instance.FlowPriority);
+		}
+		if (Instance.SymmetryGroup >= 0)
+		{
+			E->SetNumberField(TEXT("symmetry_group"), Instance.SymmetryGroup);
+		}
+		Entries.Add(MakeShared<FJsonValueObject>(E));
+	}
+	Root->SetArrayField(TEXT("parts"), Entries);
+	FString Json;
+	const TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Json);
+	FJsonSerializer::Serialize(Root, Writer);
+	return Json;
+}
+
+bool PeriapsisData::LoadDesign(const FString& Path, const FString& DataRoot, const PartCatalog& Catalog, VesselDesign& Out,
+	TArray<FString>& OutErrors)
+{
+	const FString Full = FPaths::IsRelative(Path) ? FPaths::Combine(DataRoot, Path) : Path;
+	FString Json;
+	if (!FFileHelper::LoadFileToString(Json, *Full))
+	{
+		OutErrors.Add(FString::Printf(TEXT("cannot read design '%s'"), *Path));
+		return false;
+	}
+	TArray<FString> DesignErrors;
+	const bool bOk = ParseDesign(Json, Catalog, Out, DesignErrors);
+	for (const FString& Error : DesignErrors)
+	{
+		OutErrors.Add(FString::Printf(TEXT("%s: %s"), *Path, *Error));
+	}
+	return bOk;
+}
+
+void PeriapsisData::PlaceOnSurface(FPeriapsisScenario& Scenario)
+{
+	if (!Scenario.SurfaceStart.IsSet())
+	{
+		return;
+	}
+	const FPeriapsisSurfaceStart& Spot = Scenario.SurfaceStart.GetValue();
+	const CelestialBody& Body = Scenario.SystemData.System.Body(Scenario.StartBody);
+	// Standing upright: its base is this far below its centre of mass.
+	const double Clearance = Scenario.Ship.Extent({0.0, 0.0, -1.0}, Scenario.Ship.CenterOfMass());
+	const double Lat = DegToRad(Spot.Latitude);
+	const double Lon = DegToRad(Spot.Longitude);
+	const Vec3 Up{FMath::Cos(Lat) * FMath::Cos(Lon), FMath::Cos(Lat) * FMath::Sin(Lon), FMath::Sin(Lat)};
+	const double Radius = Body.Radius + Body.Terrain.Height(Up) + Clearance + Spot.Height;
+	const Vec3 Position = FromBodyFixed(Body, Up * Radius, Scenario.StartTime);
+	Scenario.StartState = {Position, GroundVelocity(Body, Position) + Normalized(Position) * Spot.VerticalSpeed};
+}
+
+void PeriapsisData::SetShipDesign(FPeriapsisScenario& Scenario, const VesselDesign& Design)
+{
+	Scenario.ShipDesign = Design;
+	Scenario.ShipName = UTF8_TO_TCHAR(Design.Name.c_str());
+	Scenario.Ship = Vessel(Scenario.Catalog, Design);
+	PlaceOnSurface(Scenario);
+}
+
+FString PeriapsisData::SavedDesignsDirectory()
+{
+	return FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("Designs"));
 }
 
 FString PeriapsisData::DataDirectory()
@@ -398,6 +904,15 @@ bool PeriapsisData::ParseScenario(const FString& Json, const FString& DataRoot, 
 	}
 	Root->TryGetNumberField(TEXT("start_time_s"), Result.StartTime);
 
+	{
+		auto Catalog = std::make_shared<PartCatalog>();
+		if (!LoadPartCatalog(DataRoot, *Catalog, OutErrors))
+		{
+			return false;
+		}
+		Result.Catalog = Catalog;
+	}
+
 	const TSharedPtr<FJsonObject>* ShipObject = nullptr;
 	if (!Root->TryGetObjectField(TEXT("ship"), ShipObject))
 	{
@@ -407,17 +922,47 @@ bool PeriapsisData::ParseScenario(const FString& Json, const FString& DataRoot, 
 	const FJsonObject& S = **ShipObject;
 	const FString ShipWhere = TEXT("ship");
 	S.TryGetStringField(TEXT("name"), Result.ShipName);
-	ReadNumber(S, TEXT("dry_mass_kg"), ShipWhere, Result.Ship.DryMass, OutErrors);
-	ReadNumber(S, TEXT("fuel_mass_kg"), ShipWhere, Result.Ship.FuelMass, OutErrors);
-	ReadNumber(S, TEXT("thrust_n"), ShipWhere, Result.Ship.Thrust, OutErrors);
-	ReadNumber(S, TEXT("isp_s"), ShipWhere, Result.Ship.IspSeconds, OutErrors);
-	RequirePositive(Result.Ship.DryMass, TEXT("dry_mass_kg"), ShipWhere, OutErrors);
-	RequirePositive(Result.Ship.Thrust, TEXT("thrust_n"), ShipWhere, OutErrors);
-	RequirePositive(Result.Ship.IspSeconds, TEXT("isp_s"), ShipWhere, OutErrors);
-	if (Result.Ship.FuelMass < 0.0)
+	FString DesignPath;
+	if (S.TryGetStringField(TEXT("design"), DesignPath))
 	{
-		OutErrors.Add(TEXT("ship: 'fuel_mass_kg' cannot be negative"));
+		// A vessel made of parts.
+		if (!LoadDesign(DesignPath, DataRoot, *Result.Catalog, Result.ShipDesign, OutErrors))
+		{
+			return false;
+		}
+		if (Result.ShipName.IsEmpty())
+		{
+			Result.ShipName = UTF8_TO_TCHAR(Result.ShipDesign.Name.c_str());
+		}
+		Result.Ship = Vessel(Result.Catalog, Result.ShipDesign);
 	}
+	else
+	{
+		// The one-part hull of M2 to M4.
+		ShipConfig Config;
+		double Length = 6.0, Diameter = 2.0;
+		ReadNumber(S, TEXT("dry_mass_kg"), ShipWhere, Config.DryMass, OutErrors);
+		ReadNumber(S, TEXT("fuel_mass_kg"), ShipWhere, Config.FuelMass, OutErrors);
+		ReadNumber(S, TEXT("thrust_n"), ShipWhere, Config.Thrust, OutErrors);
+		ReadNumber(S, TEXT("isp_s"), ShipWhere, Config.IspSeconds, OutErrors);
+		RequirePositive(Config.DryMass, TEXT("dry_mass_kg"), ShipWhere, OutErrors);
+		RequirePositive(Config.Thrust, TEXT("thrust_n"), ShipWhere, OutErrors);
+		RequirePositive(Config.IspSeconds, TEXT("isp_s"), ShipWhere, OutErrors);
+		if (Config.FuelMass < 0.0)
+		{
+			OutErrors.Add(TEXT("ship: 'fuel_mass_kg' cannot be negative"));
+		}
+		S.TryGetNumberField(TEXT("length_m"), Length);
+		S.TryGetNumberField(TEXT("diameter_m"), Diameter);
+		RequirePositive(Length, TEXT("length_m"), ShipWhere, OutErrors);
+		RequirePositive(Diameter, TEXT("diameter_m"), ShipWhere, OutErrors);
+		if (OutErrors.Num() > ErrorsBefore)
+		{
+			return false;
+		}
+		Result.Ship = Vessel::FromShipConfig(Config, Length, Diameter);
+	}
+	Result.Ship.SetName(TCHAR_TO_UTF8(*Result.ShipName));
 	FString Attitude;
 	if (S.TryGetStringField(TEXT("attitude"), Attitude))
 	{
@@ -441,10 +986,6 @@ bool PeriapsisData::ParseScenario(const FString& Json, const FString& DataRoot, 
 			OutErrors.Add(FString::Printf(TEXT("ship: unknown 'attitude' '%s'"), *Attitude));
 		}
 	}
-	S.TryGetNumberField(TEXT("length_m"), Result.ShipLength);
-	S.TryGetNumberField(TEXT("diameter_m"), Result.ShipDiameter);
-	RequirePositive(Result.ShipLength, TEXT("length_m"), ShipWhere, OutErrors);
-	RequirePositive(Result.ShipDiameter, TEXT("diameter_m"), ShipWhere, OutErrors);
 
 	const TSharedPtr<FJsonObject>* OrbitObject = nullptr;
 	const TSharedPtr<FJsonObject>* SurfaceObject = nullptr;
@@ -461,8 +1002,13 @@ bool PeriapsisData::ParseScenario(const FString& Json, const FString& DataRoot, 
 	}
 	else
 	{
-		ParseStartSurface(**SurfaceObject, Result.SystemData, Result.StartTime, 0.5 * Result.ShipLength, Result.StartBody, Result.StartState,
-			OutErrors);
+		FPeriapsisSurfaceStart Surface;
+		ParseStartSurface(**SurfaceObject, Result.SystemData, Result.StartBody, Surface, OutErrors);
+		if (Result.StartBody != kNoBody)
+		{
+			Result.SurfaceStart = Surface;
+			PlaceOnSurface(Result);
+		}
 	}
 
 	const TArray<TSharedPtr<FJsonValue>>* Others = nullptr;

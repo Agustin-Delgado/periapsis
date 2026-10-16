@@ -4,6 +4,7 @@
 #include "PeriapsisCore/Kepler.h"
 #include "PeriapsisCore/Maneuver.h"
 #include "PeriapsisCore/Rocket.h"
+#include "PeriapsisCore/Staging.h"
 #include "PeriapsisCore/Surface.h"
 
 #include <algorithm>
@@ -61,15 +62,20 @@ namespace Periapsis::Core
 		return {State.Position + FromRelativeToTo.Position, State.Velocity + FromRelativeToTo.Velocity};
 	}
 
-	Flight::Flight(const CelestialSystem& InSystem, const ShipConfig& InConfig, int InBodyIndex,
-		const StateVector& InState, double InTime, const PredictionSettings& InPrediction)
+	Flight::Flight(const CelestialSystem& InSystem, Vessel InVessel, int InBodyIndex, const StateVector& InState, double InTime,
+		const PredictionSettings& InPrediction)
 		: SystemRef(InSystem)
-		, Config(InConfig)
+		, Craft(std::move(InVessel))
 		, Prediction(InPrediction)
 		, CurrentBody(InBodyIndex)
 		, CurrentState(InState)
 		, CurrentTime(InTime)
-		, FuelLeft(InConfig.FuelMass)
+	{
+	}
+
+	Flight::Flight(const CelestialSystem& InSystem, const ShipConfig& InConfig, int InBodyIndex, const StateVector& InState,
+		double InTime, const PredictionSettings& InPrediction)
+		: Flight(InSystem, Vessel::FromShipConfig(InConfig, 6.0, 2.0), InBodyIndex, InState, InTime, InPrediction)
 	{
 	}
 
@@ -89,7 +95,69 @@ namespace Periapsis::Core
 
 	double Flight::RemainingDeltaV() const
 	{
-		return RocketDeltaV(Config.IspSeconds, Mass(), Config.DryMass);
+		return TotalDeltaV(AnalyzeStages(Craft));
+	}
+
+	void Flight::ApplySeparation(Separation&& Split)
+	{
+		const Mat3 Turn = Attitude();
+		SeparatedPiece Piece;
+		Piece.Piece = std::move(Split.Piece);
+		Piece.BodyIndex = CurrentBody;
+		Piece.State = {CurrentState.Position + Turn * Split.Offset, CurrentState.Velocity + Turn * Split.DeltaV};
+		Piece.Time = CurrentTime;
+		Piece.Direction = Direction;
+		Separated.push_back(std::move(Piece));
+		CurrentState.Position += Turn * Split.RestOffset;
+		CurrentState.Velocity += Turn * Split.RestDeltaV;
+		Patches.clear();
+		bPatchesValid = false;
+	}
+
+	void Flight::BreakOverloadedJoints()
+	{
+		// The worst joint goes first; what it carried no longer loads the rest, so look again.
+		for (int Pass = 0; Pass < 1000; ++Pass)
+		{
+			JointLoad Worst;
+			for (const JointLoad& Load : Craft.JointLoads(ThrottleValue))
+			{
+				if (Load.Ratio > Worst.Ratio)
+				{
+					Worst = Load;
+				}
+			}
+			if (!(Worst.Ratio > 1.0))
+			{
+				return;
+			}
+			ApplySeparation(Craft.BreakJoint(Worst.Part));
+		}
+	}
+
+	void Flight::Stage()
+	{
+		if (CurrentStatus == FlightStatus::Crashed || Craft.NextStage() >= Craft.StageCount())
+		{
+			return;
+		}
+		if (CurrentStatus == FlightStatus::Landed)
+		{
+			TakeOff();
+		}
+		for (Separation& Split : Craft.ActivateNextStage())
+		{
+			ApplySeparation(std::move(Split));
+		}
+		Patches.clear();
+		bPatchesValid = false;
+	}
+
+	std::vector<SeparatedPiece> Flight::TakeSeparatedPieces()
+	{
+		std::vector<SeparatedPiece> Result = std::move(Separated);
+		Separated.clear();
+		return Result;
 	}
 
 	void Flight::Advance(double DeltaTime)
@@ -163,12 +231,26 @@ namespace Periapsis::Core
 		{
 			return 0.0;
 		}
-		const double Flow = MassFlowRate(Config.Thrust, Config.IspSeconds) * ThrottleValue;
-		const double StartMass = Mass();
-		FuelLeft = std::max(0.0, FuelLeft - Flow * DeltaTime);
+		BreakOverloadedJoints();
+		// Piece by piece between flameouts, each exact with the rocket equation.
+		double DeltaV = 0.0;
+		double Left = DeltaTime;
+		while (Left > 0.0 && IsThrusting())
+		{
+			const Propulsion Engines = Craft.Engines(ThrottleValue);
+			const double Dt = std::min(Left, Craft.TimeToFlameout(ThrottleValue));
+			if (!(Dt > 0.0))
+			{
+				break;
+			}
+			const double Before = Mass();
+			DeltaV += Engines.Thrust / Engines.MassFlow * std::log(Before / (Before - Engines.MassFlow * Dt));
+			Craft.Consume(Dt, ThrottleValue);
+			Left -= Dt;
+		}
 		Patches.clear();
 		bPatchesValid = false;
-		return RocketDeltaV(Config.IspSeconds, StartMass, Mass());
+		return DeltaV;
 	}
 
 	void Flight::Land()
@@ -287,13 +369,15 @@ namespace Periapsis::Core
 
 		while (CurrentTime < TargetTime && IsThrusting())
 		{
-			const double Force = Config.Thrust * ThrottleValue;
-			const double Flow = MassFlowRate(Config.Thrust, Config.IspSeconds) * ThrottleValue;
-			double Dt = std::min(kPoweredStep, TargetTime - CurrentTime);
-			const bool bBurnsOut = Flow * Dt >= FuelLeft;
-			if (bBurnsOut)
+			BreakOverloadedJoints();
+			const Propulsion Engines = Craft.Engines(ThrottleValue);
+			const double Force = Engines.Thrust;
+			const double Flow = Engines.MassFlow;
+			// Steps end where an engine flames out, so the mass flow is constant within each.
+			const double Dt = std::min({kPoweredStep, TargetTime - CurrentTime, Craft.TimeToFlameout(ThrottleValue)});
+			if (!(Dt > 0.0))
 			{
-				Dt = FuelLeft / Flow;
+				break;
 			}
 
 			const double StartMass = Mass();
@@ -305,7 +389,7 @@ namespace Periapsis::Core
 			};
 			CurrentState = StepRungeKutta4(CurrentState, 0.0, Dt, Acceleration);
 			CurrentTime += Dt;
-			FuelLeft = bBurnsOut ? 0.0 : FuelLeft - Flow * Dt;
+			Craft.Consume(Dt, ThrottleValue);
 
 			if (AltitudeAboveTerrain(SystemRef.Body(CurrentBody), CurrentState.Position, CurrentTime) <= 0.0)
 			{

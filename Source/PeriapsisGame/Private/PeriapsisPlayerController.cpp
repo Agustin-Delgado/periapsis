@@ -1,6 +1,7 @@
 #include "PeriapsisPlayerController.h"
 
 #include "EngineUtils.h"
+#include "PeriapsisBuilderView.h"
 #include "PeriapsisFlightSubsystem.h"
 #include "PeriapsisMapPawn.h"
 #include "PeriapsisUniverse.h"
@@ -37,6 +38,130 @@ APeriapsisUniverseView* APeriapsisPlayerController::GetUniverseView() const
 	return nullptr;
 }
 
+APeriapsisBuilderView* APeriapsisPlayerController::GetBuilderView() const
+{
+	for (TActorIterator<APeriapsisBuilderView> It(GetWorld()); It; ++It)
+	{
+		return *It;
+	}
+	return nullptr;
+}
+
+bool APeriapsisPlayerController::IsBuilding() const
+{
+	const UPeriapsisFlightSubsystem* Subsystem = GetWorld()->GetSubsystem<UPeriapsisFlightSubsystem>();
+	return Subsystem && Subsystem->IsBuilding();
+}
+
+void APeriapsisPlayerController::OpenBuilder()
+{
+	if (UPeriapsisFlightSubsystem* Subsystem = GetWorld()->GetSubsystem<UPeriapsisFlightSubsystem>())
+	{
+		Subsystem->EnterBuilder();
+	}
+}
+
+void APeriapsisPlayerController::HandleBuilderInput()
+{
+	APeriapsisBuilderView* View = GetBuilderView();
+	FPeriapsisBuilder* Builder = View ? View->GetBuilder() : nullptr;
+	UPeriapsisFlightSubsystem* Subsystem = GetWorld()->GetSubsystem<UPeriapsisFlightSubsystem>();
+	if (!Builder || !Subsystem)
+	{
+		return;
+	}
+	auto Pressed = [this](const FKey& Key) { return WasInputKeyJustPressed(Key); };
+	bool bChanged = true;
+	if (Pressed(EKeys::Up))
+	{
+		Builder->SelectPart(-1);
+	}
+	else if (Pressed(EKeys::Down))
+	{
+		Builder->SelectPart(1);
+	}
+	else if (Pressed(EKeys::Left))
+	{
+		Builder->CycleTarget(-1);
+	}
+	else if (Pressed(EKeys::Right))
+	{
+		Builder->CycleTarget(1);
+	}
+	else if (Pressed(EKeys::Q))
+	{
+		Builder->TurnSide(-FPeriapsisBuilder::SideTurnDegrees);
+	}
+	else if (Pressed(EKeys::E))
+	{
+		Builder->TurnSide(FPeriapsisBuilder::SideTurnDegrees);
+	}
+	else if (Pressed(EKeys::W))
+	{
+		Builder->MoveSide(FPeriapsisBuilder::SideStepMetres);
+	}
+	else if (Pressed(EKeys::S))
+	{
+		Builder->MoveSide(-FPeriapsisBuilder::SideStepMetres);
+	}
+	else if (Pressed(EKeys::Y))
+	{
+		Builder->CycleSymmetry();
+	}
+	else if (Pressed(EKeys::Enter))
+	{
+		Builder->Attach();
+	}
+	else if (Pressed(EKeys::Delete) || Pressed(EKeys::BackSpace))
+	{
+		Builder->RemoveTarget();
+	}
+	else if (Pressed(EKeys::LeftBracket))
+	{
+		Builder->ShiftTargetStage(-1);
+	}
+	else if (Pressed(EKeys::RightBracket))
+	{
+		Builder->ShiftTargetStage(1);
+	}
+	else if (Pressed(EKeys::T))
+	{
+		Builder->AutoStage();
+	}
+	else if (Pressed(EKeys::U))
+	{
+		Builder->Undo();
+	}
+	else if (Pressed(EKeys::N))
+	{
+		View->NewDesign();
+	}
+	else if (Pressed(EKeys::O))
+	{
+		View->LoadNext();
+	}
+	else if (Pressed(EKeys::F5))
+	{
+		LastSaved = View->Save();
+	}
+	else if (Pressed(EKeys::L))
+	{
+		Subsystem->LaunchDesign(Builder->GetDesign());
+	}
+	else if (Pressed(EKeys::B) || Pressed(EKeys::Escape))
+	{
+		Subsystem->LeaveBuilder();
+	}
+	else
+	{
+		bChanged = false;
+	}
+	if (bChanged)
+	{
+		View->MarkChanged();
+	}
+}
+
 FPeriapsisUniverse* APeriapsisPlayerController::GetUniverse() const
 {
 	const UPeriapsisFlightSubsystem* Subsystem = GetWorld()->GetSubsystem<UPeriapsisFlightSubsystem>();
@@ -51,6 +176,23 @@ void APeriapsisPlayerController::PlayerTick(float DeltaTime)
 	APeriapsisUniverseView* View = GetUniverseView();
 	FPeriapsisUniverse* Universe = GetUniverse();
 
+	// The camera frames the rocket in the builder, and the launch after it.
+	const bool bBuilding = IsBuilding();
+	if (MapPawn && bBuilding != bWasBuilding)
+	{
+		if (bBuilding)
+		{
+			FlightDistance = MapPawn->GetDistance();
+			UniverseBeforeBuilding = Universe;
+			MapPawn->SetDistance(6000.0); // 60 m
+		}
+		else
+		{
+			MapPawn->SetDistance(Universe != UniverseBeforeBuilding ? 8000.0 : FlightDistance);
+		}
+	}
+	bWasBuilding = bBuilding;
+
 	if (MapPawn)
 	{
 		if (IsInputKeyDown(EKeys::RightMouseButton))
@@ -59,7 +201,9 @@ void APeriapsisPlayerController::PlayerTick(float DeltaTime)
 			GetInputMouseDelta(DeltaX, DeltaY);
 			MapPawn->Orbit(DeltaX * OrbitDegreesPerMouseUnit, DeltaY * OrbitDegreesPerMouseUnit);
 		}
-		const double MinDistance = View ? View->GetFocusRadiusUnreal() * 1.3 : 0.0;
+		APeriapsisBuilderView* BuilderView = GetBuilderView();
+		const double MinDistance = IsBuilding() ? (BuilderView ? BuilderView->GetRadiusUnreal() * 1.2 : 0.0)
+			: (View ? View->GetFocusRadiusUnreal() * 1.3 : 0.0);
 		if (WasInputKeyJustPressed(EKeys::MouseScrollUp))
 		{
 			MapPawn->Zoom(1.0 / ZoomStep, MinDistance);
@@ -70,6 +214,21 @@ void APeriapsisPlayerController::PlayerTick(float DeltaTime)
 		}
 	}
 
+	if (WasInputKeyJustPressed(EKeys::F1))
+	{
+		bShowHelp = !bShowHelp;
+	}
+	if (IsBuilding())
+	{
+		HandleBuilderInput();
+		return;
+	}
+	if (WasInputKeyJustPressed(EKeys::B))
+	{
+		OpenBuilder();
+		return;
+	}
+
 	if (View && WasInputKeyJustPressed(EKeys::Tab))
 	{
 		View->CycleFocus();
@@ -78,11 +237,6 @@ void APeriapsisPlayerController::PlayerTick(float DeltaTime)
 			MapPawn->Zoom(1.0, View->GetFocusRadiusUnreal() * 1.3); // step out of a body if needed
 		}
 	}
-	if (WasInputKeyJustPressed(EKeys::F1))
-	{
-		bShowHelp = !bShowHelp;
-	}
-
 	if (!Universe)
 	{
 		return;
@@ -142,5 +296,9 @@ void APeriapsisPlayerController::PlayerTick(float DeltaTime)
 	if (WasInputKeyJustPressed(EKeys::R))
 	{
 		Universe->Restart();
+	}
+	if (WasInputKeyJustPressed(EKeys::SpaceBar))
+	{
+		Universe->Stage();
 	}
 }

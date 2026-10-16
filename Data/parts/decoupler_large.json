@@ -1,0 +1,27 @@
+{
+	"id": "decoupler_large",
+	"name": "Large stack decoupler",
+	"category": "decoupler",
+	"dry_mass_kg": 160,
+	"cost": 900,
+	"geometry": { "shape": "frustum", "length_m": 0.3, "bottom_radius_m": 1.25, "top_radius_m": 1.25 },
+	"attach_nodes": [
+		{
+			"id": "top",
+			"pos": [0, 0, 0.15],
+			"dir": [0, 0, 1],
+			"size": 2
+		},
+		{
+			"id": "bottom",
+			"pos": [0, 0, -0.15],
+			"dir": [0, 0, -1],
+			"size": 2
+		}
+	],
+	"surface_attach": false,
+	"joint_strength": { "force_n": 3000000, "torque_nm": 1500000 },
+	"modules": [
+		{ "type": "Decoupler", "ejection_impulse_ns": 12000, "crossfeed": false }
+	]
+}

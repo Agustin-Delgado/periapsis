@@ -1,0 +1,28 @@
+{
+	"id": "tank_small_short",
+	"name": "Small tank, short",
+	"category": "tank",
+	"dry_mass_kg": 60,
+	"cost": 300,
+	"geometry": { "shape": "frustum", "length_m": 1.0, "bottom_radius_m": 0.625, "top_radius_m": 0.625 },
+	"attach_nodes": [
+		{
+			"id": "top",
+			"pos": [0, 0, 0.5],
+			"dir": [0, 0, 1],
+			"size": 1
+		},
+		{
+			"id": "bottom",
+			"pos": [0, 0, -0.5],
+			"dir": [0, 0, -1],
+			"size": 1
+		}
+	],
+	"joint_strength": { "force_n": 600000, "torque_nm": 300000 },
+	"resources": [
+		{ "resource": "fuel", "mass_kg": 225.0 },
+		{ "resource": "oxidizer", "mass_kg": 275.0 }
+	],
+	"modules": []
+}

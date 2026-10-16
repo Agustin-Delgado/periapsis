@@ -90,3 +90,8 @@ lines and text and clear logs. Level assembly, materials and Niagara are done by
   threads), body rotation, a body-fixed physics frame near the ground, collision patch,
   impacts, rest and landing (details in `Docs/adr/0004-spherical-terrain.md`). Launch with
   `-Scenario=scenarios/landing_hop.json -CameraDistance=40` to start on the ground.
+- M5: vessels made of parts (details in `Docs/adr/0005-vessels-with-parts.md`): parts and
+  designs in `Data/parts` and `Data/vessels`, propellant domains, staging with separation,
+  joint loads, delta-v per stage, one compound Chaos body per vessel, and a keyboard builder
+  (`-Builder`, or `B` in flight). The 54-part Trident matches the rocket equation worked out by
+  hand and delivers it in flight. `-Scenario=scenarios/launch_pad.json` starts on the pad.

@@ -2,6 +2,7 @@
 
 #include "PeriapsisCore/Kepler.h"
 #include "PeriapsisCore/Surface.h"
+#include "Misc/ScopeExit.h"
 #include "PeriapsisPhysicsScene.h"
 
 using namespace Periapsis::Core;
@@ -9,6 +10,13 @@ using namespace Periapsis::Core;
 namespace
 {
 	constexpr int32 RootBody = 0; // the loader guarantees the first body is the root
+}
+
+double FPeriapsisVessel::GroundClearance() const
+{
+	const Vessel& Craft = Flight->GetVessel();
+	const Vec3 Down = -Normalized(Flight->State().Position);
+	return Craft.Extent(Flight->Attitude().Transposed() * Down, Craft.CenterOfMass());
 }
 
 FPeriapsisUniverse::FPeriapsisUniverse(FPeriapsisScenario InScenario)
@@ -34,29 +42,110 @@ void FPeriapsisUniverse::Restart()
 	bPhysicsActive = false;
 	Frame = LocalFrame();
 	RebaseCount = 0;
+	DebrisCount = 0;
+	++Generation;
+	PendingRebuilds.Reset();
+	bPendingUnfreeze = false;
 
 	const CelestialSystem& System = Scenario.SystemData.System;
 	Vessels.Reset();
 	FPeriapsisVessel& Ship = Vessels.AddDefaulted_GetRef();
 	Ship.Name = Scenario.ShipName;
-	Ship.Length = Scenario.ShipLength;
-	Ship.Width = Scenario.ShipDiameter;
 	Ship.Flight = MakeUnique<Flight>(System, Scenario.Ship, Scenario.StartBody, Scenario.StartState, Scenario.StartTime);
 	for (const FPeriapsisPassiveVessel& Passive : Scenario.OtherVessels)
 	{
-		ShipConfig NoEngine;
-		NoEngine.DryMass = Passive.Mass;
 		FPeriapsisVessel& Vessel = Vessels.AddDefaulted_GetRef();
 		Vessel.Name = Passive.Name;
-		Vessel.Length = Passive.Size;
-		Vessel.Width = Passive.Size;
-		Vessel.Flight = MakeUnique<Flight>(System, NoEngine, Passive.StartBody, Passive.StartState, Scenario.StartTime);
+		Vessel.Flight = MakeUnique<Flight>(System, Periapsis::Core::Vessel::Inert(Passive.Mass, Passive.Size), Passive.StartBody,
+			Passive.StartState, Scenario.StartTime);
 	}
 
 	CurrentTime = Scenario.StartTime;
 	Attitude = Scenario.StartAttitude;
 	WarpLevel = 0;
 	WarpLimitReason.Reset();
+	// Facing the way it will be held, so pieces and parts are placed right from the start.
+	Ship.Flight->SetThrustDirection(AttitudeFor(*Ship.Flight));
+}
+
+void FPeriapsisUniverse::Stage()
+{
+	Flight& Active = GetFlight();
+	if (Active.Status() == FlightStatus::Crashed)
+	{
+		return;
+	}
+	FPeriapsisVessel& Vessel = Vessels[ActiveVessel];
+	if (Active.Status() == FlightStatus::Landed)
+	{
+		Vessel.RestTime = 0.0;
+		bPendingUnfreeze = Vessel.bFrozen;
+	}
+	Active.Stage();
+	CollectSeparations();
+}
+
+void FPeriapsisUniverse::ApplyPendingSceneChanges()
+{
+	FPeriapsisVessel& Active = Vessels[ActiveVessel];
+	if (bPendingUnfreeze && Active.bFrozen)
+	{
+		Scene->SetFrozen(ActiveVessel, false);
+		Active.bFrozen = false;
+	}
+	bPendingUnfreeze = false;
+	for (const int32 Index : PendingRebuilds)
+	{
+		if (Vessels[Index].bInBubble)
+		{
+			RebuildInScene(Index);
+		}
+	}
+	PendingRebuilds.Reset();
+}
+
+void FPeriapsisUniverse::CollectSeparations()
+{
+	const int32 Existing = Vessels.Num();
+	for (int32 Index = 0; Index < Existing; ++Index)
+	{
+		std::vector<SeparatedPiece> Pieces = Vessels[Index].Flight->TakeSeparatedPieces();
+		if (Pieces.empty())
+		{
+			continue;
+		}
+		if (Vessels[Index].bInBubble)
+		{
+			if (bInPhysicsStep)
+			{
+				RebuildInScene(Index);
+			}
+			else
+			{
+				PendingRebuilds.AddUnique(Index);
+			}
+		}
+		const FString Source = Vessels[Index].Name;
+		for (SeparatedPiece& Piece : Pieces)
+		{
+			// Pieces coast on rails until the bubble takes them in (they start next to the ship).
+			FPeriapsisVessel& NewVessel = Vessels.AddDefaulted_GetRef();
+			NewVessel.Name = FString::Printf(TEXT("%s debris %d"), *Source, ++DebrisCount);
+			NewVessel.Flight = MakeUnique<Flight>(GetSystem(), MoveTemp(Piece.Piece), Piece.BodyIndex, Piece.State, Piece.Time);
+			NewVessel.Flight->SetThrustDirection(Piece.Direction);
+		}
+	}
+}
+
+void FPeriapsisUniverse::RebuildInScene(int32 Index)
+{
+	// The body takes the new shape and starts again from the flight's state, which moved to the
+	// new centre of mass; until then the vessel coasts (or burns) on rails.
+	FPeriapsisVessel& Vessel = Vessels[Index];
+	Scene->AddVessel(Index, Vessel.Flight->GetVessel());
+	Vessel.bPlaced = false;
+	Vessel.bFrozen = false;
+	Vessel.bHeldByGround = false;
 }
 
 void FPeriapsisUniverse::SetThrottle(double Throttle)
@@ -113,7 +202,7 @@ Vec3 FPeriapsisUniverse::AttitudeFor(const Flight& F) const
 void FPeriapsisUniverse::TakeOffIfThrottled()
 {
 	Flight& Active = GetFlight();
-	if (Active.Status() == FlightStatus::Landed && Active.Throttle() > 0.0 && Active.Fuel() > 0.0)
+	if (Active.Status() == FlightStatus::Landed && Active.Throttle() > 0.0 && Active.GetVessel().HasThrust())
 	{
 		Active.TakeOff();
 		FPeriapsisVessel& Vessel = Vessels[ActiveVessel];
@@ -150,6 +239,7 @@ void FPeriapsisUniverse::Tick(double RealDeltaSeconds)
 	{
 		Vessel.Flight->Advance(CurrentTime - Vessel.Flight->Time());
 	}
+	CollectSeparations();
 }
 
 void FPeriapsisUniverse::SetPhysicsScene(IPeriapsisPhysicsScene* InScene)
@@ -186,6 +276,11 @@ void FPeriapsisUniverse::PhysicsStep(double Dt)
 	{
 		return;
 	}
+	bInPhysicsStep = true;
+	ON_SCOPE_EXIT
+	{
+		bInPhysicsStep = false;
+	};
 	if (!bPhysicsActive)
 	{
 		if (!WantsPhysics())
@@ -195,6 +290,8 @@ void FPeriapsisUniverse::PhysicsStep(double Dt)
 		EnterPhysics();
 	}
 
+	// Staging between steps: new bodies first, so the old ones are not read back.
+	ApplyPendingSceneChanges();
 	// Every vessel is now at CurrentTime: the bubble's from the engine, the rest on rails.
 	ReadPhysicsStates();
 	if (!WantsPhysics())
@@ -246,6 +343,7 @@ void FPeriapsisUniverse::PhysicsStep(double Dt)
 			Vessel.Flight->Advance(CurrentTime - Vessel.Flight->Time());
 		}
 	}
+	CollectSeparations();
 }
 
 void FPeriapsisUniverse::UpdateFrameKind()
@@ -352,7 +450,7 @@ void FPeriapsisUniverse::EnterPhysics()
 	UpdateFrameKind();
 	Active.bInBubble = true;
 	Active.bPlaced = false;
-	Scene->AddVessel(ActiveVessel, Active.Flight->Mass());
+	Scene->AddVessel(ActiveVessel, Active.Flight->GetVessel());
 }
 
 void FPeriapsisUniverse::LeavePhysics()
@@ -427,7 +525,7 @@ void FPeriapsisUniverse::UpdateMembership()
 			&& BelongsInBubble(Vessel.bInBubble, VesselDistance(Index, ActiveVessel), Bubble);
 		if (bBelongs && !Vessel.bInBubble)
 		{
-			Scene->AddVessel(Index, Vessel.Flight->Mass());
+			Scene->AddVessel(Index, Vessel.Flight->GetVessel());
 			Vessel.bInBubble = true;
 			Vessel.bPlaced = false;
 		}
@@ -461,14 +559,16 @@ void FPeriapsisUniverse::ApplyPhysicsForces(double Dt)
 		{
 			const double DeltaV = Vessel.Flight->BurnFor(Dt);
 			Acceleration = Acceleration + Frame.DirectionToLocal(Vessel.Flight->ThrustDirection()) * (DeltaV / Dt);
-			Scene->SetMass(Index, Vessel.Flight->Mass());
+			const Periapsis::Core::Vessel& Craft = Vessel.Flight->GetVessel();
+			Scene->SetMass(Index, Craft.Mass(), Craft.CenterOfMass());
 		}
 		Scene->SetAcceleration(Index, Acceleration, Vessel.bTouchingGround);
 		// Attitude is held in flight; standing on the ground with the engine off, the vessel
 		// settles on its own (holding it upright on a slope makes it slide).
 		if (!Vessel.bTouchingGround || Vessel.Flight->IsThrusting())
 		{
-			Scene->SetAttitude(Index, Frame.DirectionToLocal(Vessel.Flight->ThrustDirection()));
+			const Mat3 Turn = Vessel.Flight->Attitude();
+			Scene->SetAttitude(Index, {Frame.DirectionToLocal(Turn.X), Frame.DirectionToLocal(Turn.Y), Frame.DirectionToLocal(Turn.Z)});
 		}
 	}
 }

@@ -18,4 +18,6 @@ public:
 
 private:
 	void DrawLines(const TArray<FString>& Lines, float X, float Y, const FLinearColor& Color, float Scale);
+	// The builder's readout: parts to pick, the target, stats per stage, problems and keys.
+	void DrawBuilder(const class APeriapsisPlayerController& Controller, float Scale, float Margin);
 };

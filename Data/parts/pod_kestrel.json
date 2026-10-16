@@ -1,0 +1,20 @@
+{
+	"id": "pod_kestrel",
+	"name": "Kestrel command pod",
+	"category": "command",
+	"dry_mass_kg": 840,
+	"cost": 3000,
+	"geometry": { "shape": "frustum", "length_m": 1.4, "bottom_radius_m": 0.625, "top_radius_m": 0.25 },
+	"attach_nodes": [
+		{
+			"id": "bottom",
+			"pos": [0, 0, -0.7],
+			"dir": [0, 0, -1],
+			"size": 1
+		}
+	],
+	"joint_strength": { "force_n": 400000, "torque_nm": 200000 },
+	"modules": [
+		{ "type": "Command" }
+	]
+}

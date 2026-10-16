@@ -2,10 +2,12 @@
 
 using namespace Periapsis::Core;
 
-void FPeriapsisPointMassScene::AddVessel(int32 Vessel, double MassKg)
+void FPeriapsisPointMassScene::AddVessel(int32 Vessel, const Periapsis::Core::Vessel& Shape)
 {
+	// A new body, or a rebuilt one: either way it joins on the next step.
 	FBody& Body = Bodies.Add(Vessel);
-	Body.Mass = MassKg;
+	Body.Mass = Shape.Mass();
+	++Adds;
 }
 
 void FPeriapsisPointMassScene::RemoveVessel(int32 Vessel)
@@ -29,7 +31,7 @@ void FPeriapsisPointMassScene::SetState(int32 Vessel, const StateVector& Local)
 	Bodies.FindChecked(Vessel).State = Local;
 }
 
-void FPeriapsisPointMassScene::SetMass(int32 Vessel, double MassKg)
+void FPeriapsisPointMassScene::SetMass(int32 Vessel, double MassKg, const Vec3&)
 {
 	Bodies.FindChecked(Vessel).Mass = MassKg;
 }
@@ -39,7 +41,7 @@ void FPeriapsisPointMassScene::SetAcceleration(int32 Vessel, const Vec3& Acceler
 	Bodies.FindChecked(Vessel).Acceleration = Acceleration;
 }
 
-void FPeriapsisPointMassScene::SetAttitude(int32, const Vec3&)
+void FPeriapsisPointMassScene::SetAttitude(int32, const Mat3&)
 {
 	// Point masses have no orientation.
 }

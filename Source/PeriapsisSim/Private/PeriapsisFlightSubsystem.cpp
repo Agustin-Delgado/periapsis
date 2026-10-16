@@ -34,6 +34,31 @@ bool UPeriapsisFlightSubsystem::LoadScenario(const FString& RelativePath)
 	return true;
 }
 
+bool UPeriapsisFlightSubsystem::LaunchDesign(const Periapsis::Core::VesselDesign& Design)
+{
+	FPeriapsisScenario Scenario;
+	TArray<FString> Errors;
+	if (!PeriapsisData::LoadScenario(LaunchScenario, Scenario, Errors))
+	{
+		for (const FString& Error : Errors)
+		{
+			UE_LOG(LogPeriapsisFlight, Error, TEXT("  %s"), *Error);
+		}
+		return false;
+	}
+	if (Design.IsEmpty() || !Design.Validate(*Scenario.Catalog).empty())
+	{
+		UE_LOG(LogPeriapsisFlight, Error, TEXT("Design '%s' cannot be launched"), UTF8_TO_TCHAR(Design.Name.c_str()));
+		return false;
+	}
+	PeriapsisData::SetShipDesign(Scenario, Design);
+	Universe = MakeUnique<FPeriapsisUniverse>(MoveTemp(Scenario));
+	bBuilding = false;
+	UE_LOG(LogPeriapsisFlight, Log, TEXT("Launching '%s' (%d parts)"), *Universe->GetShipName(),
+		static_cast<int32>(Universe->GetFlight().GetVessel().Parts().size()));
+	return true;
+}
+
 void UPeriapsisFlightSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 {
 	Super::OnWorldBeginPlay(InWorld);
@@ -44,6 +69,8 @@ void UPeriapsisFlightSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 		FParse::Value(FCommandLine::Get(), TEXT("Scenario="), Path);
 		LoadScenario(Path);
 	}
+	// -Builder opens the builder first.
+	bBuilding = FParse::Param(FCommandLine::Get(), TEXT("Builder"));
 }
 
 void UPeriapsisFlightSubsystem::Deinitialize()
@@ -55,6 +82,14 @@ void UPeriapsisFlightSubsystem::Deinitialize()
 void UPeriapsisFlightSubsystem::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	if (bBuilding)
+	{
+		if (AWorldSettings* Writable = GetWorld()->GetWorldSettings())
+		{
+			Writable->SetTimeDilation(1.0f);
+		}
+		return; // the universe waits while the builder is open
+	}
 	if (Universe && !GetWorld()->IsPaused())
 	{
 		// The world runs dilated while the physics bubble warps; the rails use real time.

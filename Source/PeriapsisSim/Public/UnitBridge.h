@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "PeriapsisCore/Mat3.h"
 #include "PeriapsisCore/Vec3.h"
 
 // The single boundary between simulation units (SI, double, metres) and Unreal units
@@ -36,5 +37,24 @@ struct FUnitBridge
 	static FVector DirectionToUnreal(const Periapsis::Core::Vec3& Direction)
 	{
 		return FVector(Direction.X, -Direction.Y, Direction.Z).GetSafeNormal();
+	}
+
+	static Periapsis::Core::Vec3 DirectionToSI(const FVector& Direction)
+	{
+		const FVector Unit = Direction.GetSafeNormal();
+		return {Unit.X, -Unit.Y, Unit.Z};
+	}
+
+	// A rotation R (columns: where the axes go) seen through the mirror is M R M, still a proper
+	// rotation: its axes are the mirrored X and Z and the opposite of the mirrored Y. Points of a
+	// rotated object convert with ToUnreal, which mirrors them the same way.
+	static FQuat RotationToUnreal(const Periapsis::Core::Mat3& Rotation)
+	{
+		return FMatrix(DirectionToUnreal(Rotation.X), -DirectionToUnreal(Rotation.Y), DirectionToUnreal(Rotation.Z), FVector::ZeroVector).ToQuat();
+	}
+
+	static Periapsis::Core::Mat3 RotationToSI(const FQuat& Rotation)
+	{
+		return {DirectionToSI(Rotation.GetAxisX()), DirectionToSI(-Rotation.GetAxisY()), DirectionToSI(Rotation.GetAxisZ())};
 	}
 };

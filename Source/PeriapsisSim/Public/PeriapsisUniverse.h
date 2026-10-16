@@ -8,13 +8,10 @@
 class IPeriapsisPhysicsScene;
 
 // A vessel of the universe: its flight, and its place in the physics bubble.
-struct FPeriapsisVessel
+struct PERIAPSISSIM_API FPeriapsisVessel
 {
 	FString Name;
 	TUniquePtr<Periapsis::Core::Flight> Flight;
-	// Hull, in metres: a cylinder along the thrust (the ship) or a cube (Width == Length).
-	double Length = 0.0;
-	double Width = 0.0;
 	bool bInBubble = false; // has a body in the physics scene
 	bool bPlaced = false;   // and that body is simulating, with the vessel's state
 	bool bFrozen = false;   // landed: its body rests in the scene without being simulated
@@ -23,8 +20,11 @@ struct FPeriapsisVessel
 	double RestTime = 0.0;     // s spent still on the ground
 	double LastSinkSpeed = 0.0; // m/s towards the ground on the previous step
 
-	// From the centre of the hull to the ground when it stands upright.
-	double GroundClearance() const { return 0.5 * Length; }
+	// From the centre of mass down to the lowest point of the vessel, straight down towards the
+	// body as it is turned now.
+	double GroundClearance() const;
+	// Radius of a sphere around the centre of mass that holds the vessel.
+	double Size() const { return Flight->GetVessel().BoundingRadius(); }
 };
 
 // The running simulation: the celestial system, the vessels and the clock.
@@ -46,7 +46,7 @@ public:
 	static constexpr int32 MaxPhysicsWarpLevel = 2; // 4x
 	// Warp is lowered so that an SOI change or an impact never comes in fewer frames than this.
 	static constexpr double MinFramesToEvent = 8.0;
-	// Touching the ground faster than this destroys a vessel (no landing legs before M5).
+	// Touching the ground faster than this destroys a vessel (no landing legs yet).
 	static constexpr double CrashSpeed = 12.0; // m/s
 	// A vessel this still on the ground for this long goes to sleep as landed (spec 5.10).
 	static constexpr double RestSpeed = 0.05;   // m/s, relative to the ground
@@ -71,6 +71,8 @@ public:
 	// whether the bubble should stay.
 	void Tick(double RealDeltaSeconds);
 	void Restart();
+	// Goes up on every Restart(): whatever was built for the vessels before is stale.
+	int32 GetGeneration() const { return Generation; }
 
 	// The physics engine that runs the bubble; null (the default) keeps everything on rails.
 	// The scene must outlive its use here, or be detached first.
@@ -92,6 +94,8 @@ public:
 	void SetThrottle(double Throttle);
 	void AddThrottle(double Delta) { SetThrottle(GetFlight().Throttle() + Delta); }
 	void SetAttitude(Periapsis::Core::AttitudeMode Mode) { Attitude = Mode; }
+	// Fires the active vessel's next stage (spec 5.5). Pieces that come off become vessels.
+	void Stage();
 	void IncreaseWarp();
 	void DecreaseWarp();
 	void ResetWarp() { WarpLevel = 0; }
@@ -105,6 +109,7 @@ public:
 	const FPeriapsisBodyInfo& GetBodyInfo(int32 Index) const { return Scenario.SystemData.Bodies[Index]; }
 	int32 NumBodies() const { return Scenario.SystemData.Bodies.Num(); }
 	const FString& GetShipName() const { return Vessels[ActiveVessel].Name; }
+	const FPeriapsisScenario& GetScenario() const { return Scenario; }
 	Periapsis::Core::AttitudeMode GetAttitude() const { return Attitude; }
 	int32 GetWarpLevel() const { return WarpLevel; }
 	double GetWarp() const { return WarpLevels[WarpLevel]; }
@@ -140,6 +145,17 @@ private:
 	void TakeOffIfThrottled();
 	Periapsis::Core::Vec3 AttitudeFor(const Periapsis::Core::Flight& Flight) const;
 	void RemoveFromBubble(FPeriapsisVessel& Vessel, int32 Index);
+	// Turns pieces that came off any vessel into vessels; a vessel in the bubble that lost parts
+	// gets a new body.
+	void CollectSeparations();
+	void RebuildInScene(int32 Index);
+	int32 DebrisCount = 0;
+	// The scene is only touched from the physics step: what staging asks for in between waits.
+	bool bInPhysicsStep = false;
+	TArray<int32> PendingRebuilds;
+	bool bPendingUnfreeze = false;
+	void ApplyPendingSceneChanges();
+	int32 Generation = 0;
 	// A vessel's state in the local frame's body.
 	Periapsis::Core::StateVector StateInFrameBody(const FPeriapsisVessel& Vessel) const;
 

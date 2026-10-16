@@ -7,7 +7,9 @@
 #include "PeriapsisCore/Kepler.h"
 #include "PeriapsisCore/OrbitalElements.h"
 #include "PeriapsisCore/Rocket.h"
+#include "PeriapsisCore/Staging.h"
 #include "PeriapsisCore/Surface.h"
+#include "PeriapsisBuilderView.h"
 #include "PeriapsisPlayerController.h"
 #include "PeriapsisUniverse.h"
 #include "PeriapsisUniverseView.h"
@@ -77,6 +79,107 @@ void APeriapsisHUD::DrawLines(const TArray<FString>& Lines, float X, float Y, co
 	}
 }
 
+void APeriapsisHUD::DrawBuilder(const APeriapsisPlayerController& Controller, float Scale, float Margin)
+{
+	const APeriapsisBuilderView* View = Controller.GetBuilderView();
+	const FPeriapsisBuilder* Builder = View ? View->GetBuilder() : nullptr;
+	if (!Builder)
+	{
+		DrawLines({TEXT("Builder: no part catalog loaded")}, Margin, Margin, FLinearColor::Red, Scale);
+		return;
+	}
+	const PartCatalog& Catalog = Builder->GetCatalog();
+	const VesselDesign& Design = Builder->GetDesign();
+
+	// Left: the parts.
+	TArray<FString> Left;
+	Left.Add(FString::Printf(TEXT("BUILDER  -  %s"), UTF8_TO_TCHAR(Design.Name.c_str())));
+	Left.Add(TEXT(""));
+	Left.Add(TEXT("Parts (Up / Down)"));
+	for (int32 Index = 0; Index < static_cast<int32>(Catalog.Parts.size()); ++Index)
+	{
+		const PartDefinition& Part = Catalog.Parts[Index];
+		Left.Add(FString::Printf(TEXT("%s %-26s %6.0f kg  %5.0f"), Index == Builder->GetSelectedPart() ? TEXT(">") : TEXT(" "),
+			UTF8_TO_TCHAR(Part.Name.c_str()), Part.WetMass(), Part.Cost));
+	}
+	Left.Add(TEXT(""));
+	const FPeriapsisAttachTarget Target = Builder->GetTarget();
+	if (Design.IsEmpty())
+	{
+		Left.Add(TEXT("Target     none: Enter starts the design with this part"));
+	}
+	else if (Target.Instance != INDEX_NONE)
+	{
+		const PartInstance& On = Design.Parts()[Target.Instance];
+		const FString Where = Target.Node.IsEmpty()
+			? FString::Printf(TEXT("side at %.0f deg, %+.2f m (Q/E, W/S)"), Builder->GetSideAngle(), Builder->GetSideHeight())
+			: FString::Printf(TEXT("node '%s'"), *Target.Node);
+		Left.Add(FString::Printf(TEXT("Target     %s, %s  (%d of %d, Left / Right)"), UTF8_TO_TCHAR(Catalog.Parts[On.Part].Name.c_str()), *Where,
+			Builder->GetTargetIndex() + 1, Builder->GetTargets().Num()));
+		if (On.Stage >= 0)
+		{
+			Left.Add(FString::Printf(TEXT("           in stage %d  ([ / ])"), On.Stage));
+		}
+	}
+	Left.Add(FString::Printf(TEXT("Symmetry   %d  (Y)"), Builder->GetSymmetry()));
+	if (!Builder->GetMessage().IsEmpty())
+	{
+		Left.Add(Builder->GetMessage());
+	}
+	if (!Controller.GetLastSaved().IsEmpty())
+	{
+		Left.Add(FString::Printf(TEXT("Saved to %s"), *Controller.GetLastSaved()));
+	}
+	DrawLines(Left, Margin, Margin, FLinearColor::White, Scale);
+
+	// Right: the vessel, stage by stage, in vacuum and at sea level on home (spec 8.2).
+	const Vessel Craft = Builder->MakeVessel();
+	TArray<FString> Right;
+	const double Gravity = 9.81;
+	if (Craft.IsValid())
+	{
+		const std::vector<StageStats> Vacuum = Builder->Stats(0.0, Gravity);
+		const std::vector<StageStats> SeaLevel = Builder->Stats(kStandardAtmospherePa, Gravity);
+		Right.Add(FString::Printf(TEXT("%d parts   %.1f t   cost %.0f"), static_cast<int32>(Craft.Parts().size()), Craft.Mass() / 1000.0, Craft.Cost()));
+		Right.Add(FString::Printf(TEXT("Delta-v    %.0f m/s vacuum, %.0f m/s sea level"), TotalDeltaV(Vacuum), TotalDeltaV(SeaLevel)));
+		Right.Add(TEXT(""));
+		Right.Add(TEXT("Stage   dv vac / SL      TWR vac / SL   burn     mass"));
+		for (size_t Index = 0; Index < Vacuum.size(); ++Index)
+		{
+			const StageStats& V = Vacuum[Index];
+			const StageStats& S = SeaLevel[Index];
+			Right.Add(FString::Printf(TEXT("S%-3d  %5.0f / %5.0f   %5.2f / %5.2f   %-7s %5.1f t"), V.Stage, V.DeltaV, S.DeltaV, V.StartTwr, S.StartTwr,
+				*FormatDuration(V.BurnTime), V.StartMass / 1000.0));
+		}
+		Right.Add(TEXT(""));
+		Right.Add(TEXT("TWR against home's 9.81 m/s2. Yellow: centre of mass."));
+	}
+	const TArray<FString> Problems = Builder->Problems();
+	const float Column = Canvas->ClipX * 0.55f;
+	DrawLines(Right, Column, Margin, FLinearColor::White, Scale);
+	if (!Problems.IsEmpty())
+	{
+		TArray<FString> Lines;
+		for (const FString& Problem : Problems)
+		{
+			Lines.Add(TEXT("! ") + Problem);
+		}
+		const float Below = Margin + GEngine->GetMediumFont()->GetMaxCharHeight() * Scale * 1.15f * (Right.Num() + 1);
+		DrawLines(Lines, Column, Below, FLinearColor(1.0f, 0.4f, 0.3f), Scale);
+	}
+
+	if (Controller.IsHelpVisible())
+	{
+		const TArray<FString> Help = {
+			TEXT("Enter  attach     Delete  remove     U  undo     T  auto-stage     [ ]  stage of the target"),
+			TEXT("N  new     O  open next design     F5  save     L  launch from the pad     B / Esc  back to flight"),
+			TEXT("Right drag  rotate     Wheel  zoom     F1  hide help"),
+		};
+		const float HelpHeight = GEngine->GetMediumFont()->GetMaxCharHeight() * Scale * 1.15f * Help.Num();
+		DrawLines(Help, Margin, Canvas->ClipY - Margin - HelpHeight, FLinearColor(0.7f, 0.7f, 0.7f), Scale);
+	}
+}
+
 void APeriapsisHUD::DrawHUD()
 {
 	Super::DrawHUD();
@@ -89,6 +192,11 @@ void APeriapsisHUD::DrawHUD()
 	if (!Universe)
 	{
 		DrawLines({TEXT("No scenario loaded: see the log (LogPeriapsisFlight).")}, Margin, Margin, FLinearColor::Red, Scale);
+		return;
+	}
+	if (Controller->IsBuilding())
+	{
+		DrawBuilder(*Controller, Scale, Margin);
 		return;
 	}
 
@@ -145,9 +253,24 @@ void APeriapsisHUD::DrawHUD()
 	Lines.Add(TEXT(""));
 	Lines.Add(FString::Printf(TEXT("Throttle   %3.0f%%%s"), ShipFlight.Throttle() * 100.0, ShipFlight.IsThrusting() ? TEXT("  BURNING") : TEXT("")));
 	Lines.Add(FString::Printf(TEXT("Attitude   %s"), AttitudeName(Universe->GetAttitude())));
-	Lines.Add(FString::Printf(TEXT("Fuel       %.0f kg"), ShipFlight.Fuel()));
-	Lines.Add(FString::Printf(TEXT("Delta-v    %.0f m/s"), ShipFlight.RemainingDeltaV()));
-	Lines.Add(FString::Printf(TEXT("TWR        %.2f"), ThrustToWeight(ShipFlight.Ship().Thrust, ShipFlight.Mass(), LocalGravity)));
+	const Vessel& Craft = ShipFlight.GetVessel();
+	Lines.Add(FString::Printf(TEXT("Mass       %.0f kg, %d parts  (propellant %.0f kg)"), Craft.Mass(), static_cast<int32>(Craft.Parts().size()),
+		Craft.PropellantMass()));
+	// Stages still to come, at full throttle in vacuum, against the gravity here (spec 4.5).
+	const std::vector<StageStats> Stages = AnalyzeStages(Craft, 0.0, LocalGravity);
+	Lines.Add(FString::Printf(TEXT("Delta-v    %.0f m/s   TWR %.2f now"), TotalDeltaV(Stages),
+		ThrustToWeight(Craft.Engines(1.0).Thrust, Craft.Mass(), LocalGravity)));
+	if (Craft.StageCount() > 0)
+	{
+		Lines.Add(Craft.NextStage() < Craft.StageCount()
+			? FString::Printf(TEXT("Stages     next %d of %d  (Space)"), Craft.NextStage(), Craft.StageCount())
+			: FString(TEXT("Stages     all fired")));
+		for (const StageStats& Stage : Stages)
+		{
+			Lines.Add(FString::Printf(TEXT("  %-6s   %5.0f m/s  TWR %.2f  %s"), Stage.Stage < 0 ? TEXT("now") : *FString::Printf(TEXT("S%d"), Stage.Stage),
+				Stage.DeltaV, Stage.StartTwr, *FormatDuration(Stage.BurnTime)));
+		}
+	}
 	Lines.Add(TEXT(""));
 	if (Universe->IsPhysicsActive())
 	{
@@ -196,12 +319,12 @@ void APeriapsisHUD::DrawHUD()
 	if (Controller->IsHelpVisible())
 	{
 		const TArray<FString> Help = {
-			TEXT("Shift / Ctrl  throttle up / down     Z / X  full / cut"),
+			TEXT("Shift / Ctrl  throttle up / down     Z / X  full / cut     Space  stage"),
 			TEXT("1-6  prograde, retrograde, normal, anti-normal, radial out, radial in"),
 			TEXT("7 / 8  surface retrograde (for landing) / surface prograde"),
 			TEXT(". / ,  warp up / down     /  warp 1x"),
 			TEXT("Right drag  rotate     Wheel  zoom     Tab  next focus"),
-			TEXT("R  restart     F1  hide help"),
+			TEXT("R  restart     B  builder     F1  hide help"),
 		};
 		const float HelpHeight = GEngine->GetMediumFont()->GetMaxCharHeight() * Scale * 1.15f * Help.Num();
 		DrawLines(Help, Margin, Canvas->ClipY - Margin - HelpHeight, FLinearColor(0.7f, 0.7f, 0.7f), Scale);

@@ -1,0 +1,28 @@
+{
+	"id": "tank_large",
+	"name": "Large tank",
+	"category": "tank",
+	"dry_mass_kg": 450,
+	"cost": 1600,
+	"geometry": { "shape": "frustum", "length_m": 2.5, "bottom_radius_m": 1.25, "top_radius_m": 1.25 },
+	"attach_nodes": [
+		{
+			"id": "top",
+			"pos": [0, 0, 1.25],
+			"dir": [0, 0, 1],
+			"size": 2
+		},
+		{
+			"id": "bottom",
+			"pos": [0, 0, -1.25],
+			"dir": [0, 0, -1],
+			"size": 2
+		}
+	],
+	"joint_strength": { "force_n": 3000000, "torque_nm": 1500000 },
+	"resources": [
+		{ "resource": "fuel", "mass_kg": 1800.0 },
+		{ "resource": "oxidizer", "mass_kg": 2200.0 }
+	],
+	"modules": []
+}

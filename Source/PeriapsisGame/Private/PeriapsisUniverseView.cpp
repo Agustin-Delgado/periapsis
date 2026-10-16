@@ -179,7 +179,7 @@ double APeriapsisUniverseView::GetFocusRadiusUnreal() const
 	const FPeriapsisUniverse* Universe = GetUniverse();
 	if (!Universe || Focus < Universe->NumVessels())
 	{
-		return FUnitBridge::ToUnreal(0.5 * (Universe ? Universe->GetVessel(Focus).Length : 6.0));
+		return FUnitBridge::ToUnreal(Universe ? Universe->GetVessel(Focus).Size() : 3.0);
 	}
 	return FUnitBridge::ToUnreal(Universe->GetSystem().Body(Focus - Universe->NumVessels()).Radius);
 }
@@ -188,8 +188,7 @@ FVector APeriapsisUniverseView::VesselLocation(const FPeriapsisUniverse& Univers
 {
 	// Simulated vessels are where Chaos shows them; the bubble places the others.
 	const APeriapsisBubble* Scene = GetBubble();
-	const UStaticMeshComponent* Mesh = Scene ? Scene->GetVesselMesh(Vessel) : nullptr;
-	return Mesh ? Mesh->GetComponentLocation() : View.ToWorld(Universe.VesselPositionAt(Vessel, View.Time));
+	return Scene && Scene->GetVesselBody(Vessel) ? Scene->GetVesselCenter(Vessel) : View.ToWorld(Universe.VesselPositionAt(Vessel, View.Time));
 }
 
 FVector APeriapsisUniverseView::FocusLocation(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View) const
@@ -212,7 +211,15 @@ void APeriapsisUniverseView::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	FPeriapsisUniverse* Universe = GetUniverse();
-	if (!Universe)
+	const UPeriapsisFlightSubsystem* Subsystem = GetWorld()->GetSubsystem<UPeriapsisFlightSubsystem>();
+	const bool bBuilding = Subsystem && Subsystem->IsBuilding();
+	// The builder has the screen to itself.
+	SetActorHiddenInGame(bBuilding);
+	if (APeriapsisTerrain* Terrain = GetTerrain())
+	{
+		Terrain->SetActorHiddenInGame(bBuilding);
+	}
+	if (!Universe || bBuilding)
 	{
 		return;
 	}

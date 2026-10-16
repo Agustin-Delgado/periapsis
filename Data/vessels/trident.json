@@ -1,0 +1,33 @@
+{
+	"_comment": "Three-stage rocket of M5, 54 parts: a core with eight boosters that drop when they run dry, a second stage and an upper stage with the pod. Stages fire in order from 0: core and boosters at launch, boosters off, second stage, upper stage. 'symmetry' places copies around the parent's axis; parts attached to one copy go on every copy.",
+	"name": "Trident",
+	"parts": [
+		{ "id": "pod", "part": "pod_kestrel" },
+		{ "id": "upper_tank", "part": "tank_small_long", "parent": "pod", "parent_node": "bottom", "node": "top" },
+		{ "id": "upper_tank_2", "part": "tank_small_short", "parent": "upper_tank", "parent_node": "bottom", "node": "top" },
+		{ "id": "upper_engine", "part": "engine_wren", "parent": "upper_tank_2", "parent_node": "bottom", "node": "top", "stage": 3 },
+		{ "id": "upper_decoupler", "part": "decoupler_small", "parent": "upper_engine", "parent_node": "bottom", "node": "top", "stage": 3 },
+		{ "id": "second_tank_1", "part": "tank_small_long", "parent": "upper_decoupler", "parent_node": "bottom", "node": "top" },
+		{ "id": "second_tank_2", "part": "tank_small_long", "parent": "second_tank_1", "parent_node": "bottom", "node": "top" },
+		{ "id": "second_tank_3", "part": "tank_small_long", "parent": "second_tank_2", "parent_node": "bottom", "node": "top" },
+		{ "id": "second_engine", "part": "engine_sparrow", "parent": "second_tank_3", "parent_node": "bottom", "node": "top", "stage": 2 },
+		{ "id": "second_decoupler", "part": "decoupler_small", "parent": "second_engine", "parent_node": "bottom", "node": "top", "stage": 2 },
+		{ "id": "core_adapter", "part": "adapter_large_small", "parent": "second_decoupler", "parent_node": "bottom", "node": "top" },
+		{ "id": "core_tank_1", "part": "tank_large_long", "parent": "core_adapter", "parent_node": "bottom", "node": "top" },
+		{ "id": "core_tank_2", "part": "tank_large_long", "parent": "core_tank_1", "parent_node": "bottom", "node": "top" },
+		{ "id": "core_engine", "part": "engine_condor", "parent": "core_tank_2", "parent_node": "bottom", "node": "top", "stage": 0 },
+		{
+			"id": "booster_mount",
+			"part": "decoupler_radial",
+			"parent": "core_tank_2",
+			"surface": { "angle_deg": 22.5, "height_m": 0.5 },
+			"node": "inner",
+			"symmetry": 8,
+			"stage": 1
+		},
+		{ "id": "booster_tank_1", "part": "tank_small_long", "parent": "booster_mount", "parent_node": "outer", "node": "surface" },
+		{ "id": "booster_tank_2", "part": "tank_small_long", "parent": "booster_tank_1", "parent_node": "bottom", "node": "top" },
+		{ "id": "booster_engine", "part": "engine_finch", "parent": "booster_tank_2", "parent_node": "bottom", "node": "top", "stage": 0 },
+		{ "id": "booster_nose", "part": "nose_cone_small", "parent": "booster_tank_1", "parent_node": "top", "node": "bottom" }
+	]
+}

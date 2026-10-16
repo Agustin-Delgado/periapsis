@@ -14,7 +14,7 @@ namespace Chaos
 	class FRigidBodyHandle_Internal;
 }
 class UProceduralMeshComponent;
-class UStaticMeshComponent;
+class UMaterialInstanceDynamic;
 
 // How the simulation maps to the Unreal world for what is on screen this frame. The world is
 // the physics bubble's local frame (or, on rails, the root frame centred on the ship), at the
@@ -32,10 +32,26 @@ struct PERIAPSISGAME_API FPeriapsisViewTransform
 	FVector DirectionToWorld(const Periapsis::Core::Vec3& Inertial) const;
 	// Rotation from a body's fixed frame (in Unreal axes, mirrored like everything else) to the world.
 	FQuat BodyFixedToWorld(const Periapsis::Core::CelestialBody& Body) const;
+	// A vessel's attitude (vessel frame to the inertial axes of the root frame) in the world.
+	FQuat AttitudeToWorld(const Periapsis::Core::Mat3& Attitude) const;
 };
 
-// The physics bubble on Chaos (M3): one mesh per vessel, simulated by Chaos while the vessel
-// is in the bubble and placed on its rails otherwise.
+// The colour a part is drawn with, by category.
+PERIAPSISGAME_API FLinearColor PartColor(const FString& Category);
+
+// Fills a procedural mesh with a vessel's parts: one section per category (coloured), and a
+// convex collision shape per part, in the vessel frame converted to Unreal units.
+PERIAPSISGAME_API void BuildVesselMesh(UProceduralMeshComponent* Mesh, const Periapsis::Core::Vessel& Vessel, UMaterialInterface* Material,
+	bool bCollision);
+// The same for loose parts placed in a vessel frame, all in one colour when Tint is given.
+PERIAPSISGAME_API void BuildPartsMesh(UProceduralMeshComponent* Mesh, const Periapsis::Core::PartCatalog& Catalog,
+	const std::vector<Periapsis::Core::PartInstance>& Parts, UMaterialInterface* Material, bool bCollision,
+	const FLinearColor* Tint = nullptr);
+
+// The physics bubble on Chaos (M3): one body per vessel, simulated by Chaos while the vessel
+// is in the bubble and placed on its rails otherwise. A body is the vessel's parts drawn and
+// collided as one compound rigid body (spec 5.2, M5); its origin is the vessel frame's origin
+// and the universe's states are those of its centre of mass, so the two are converted here.
 //
 // Chaos runs at a fixed 120 Hz on its own clock. Before each step, AsyncPhysicsTickActor
 // hands control to the universe (FPeriapsisUniverse::PhysicsStep), which reads and writes
@@ -54,14 +70,14 @@ public:
 	virtual void AsyncPhysicsTickActor(float DeltaTime, float SimTime) override;
 
 	// IPeriapsisPhysicsScene
-	virtual void AddVessel(int32 Vessel, double MassKg) override;
+	virtual void AddVessel(int32 Vessel, const Periapsis::Core::Vessel& Shape) override;
 	virtual void RemoveVessel(int32 Vessel) override;
 	virtual bool IsReady(int32 Vessel) const override;
 	virtual Periapsis::Core::StateVector GetState(int32 Vessel) const override;
 	virtual void SetState(int32 Vessel, const Periapsis::Core::StateVector& Local) override;
-	virtual void SetMass(int32 Vessel, double MassKg) override;
+	virtual void SetMass(int32 Vessel, double MassKg, const Periapsis::Core::Vec3& CenterOfMass) override;
 	virtual void SetAcceleration(int32 Vessel, const Periapsis::Core::Vec3& Acceleration, bool bInContact) override;
-	virtual void SetAttitude(int32 Vessel, const Periapsis::Core::Vec3& Forward) override;
+	virtual void SetAttitude(int32 Vessel, const Periapsis::Core::Mat3& Attitude) override;
 	virtual void SetFrozen(int32 Vessel, bool bFrozen) override;
 	virtual bool HasGround() const override;
 
@@ -71,7 +87,9 @@ public:
 	FPeriapsisViewTransform GetViewTransform() const;
 	// Places the meshes of the vessels on rails.
 	void PlaceRailsVessels(const FPeriapsisViewTransform& View);
-	UStaticMeshComponent* GetVesselMesh(int32 Vessel) const;
+	UProceduralMeshComponent* GetVesselBody(int32 Vessel) const;
+	// Where a vessel's centre of mass is drawn now.
+	FVector GetVesselCenter(int32 Vessel) const;
 	bool IsSimulating(int32 Vessel) const;
 
 
@@ -81,21 +99,24 @@ protected:
 
 private:
 	FPeriapsisUniverse* GetUniverse() const;
-	void EnsureVesselMeshes(const FPeriapsisUniverse& Universe);
+	void EnsureVesselBodies(const FPeriapsisUniverse& Universe);
+	UProceduralMeshComponent* CreateVesselBody(int32 Index, const Periapsis::Core::Vessel& Vessel);
+	// The centre of mass of a vessel's body, in its component's space (Unreal units).
+	FVector CenterOfMassUnreal(int32 Vessel) const;
 	Chaos::FRigidBodyHandle_Internal* GetHandle(int32 Vessel) const;
 	double ResultsTime() const;
-
-	UPROPERTY()
-	TObjectPtr<UStaticMesh> CylinderMesh;
-
-	UPROPERTY()
-	TObjectPtr<UStaticMesh> CubeMesh;
 
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> Material;
 
 	UPROPERTY()
-	TArray<TObjectPtr<UStaticMeshComponent>> VesselMeshes;
+	TArray<TObjectPtr<UProceduralMeshComponent>> VesselBodies;
+	// Per vessel: centre of mass in the vessel frame (SI).
+	TArray<Periapsis::Core::Vec3> CentersOfMass;
+	TArray<int32> PartCounts; // of the shape each body was built with
+	// The universe (and its restart) the bodies were built for.
+	int32 BuiltGeneration = -1;
+	const FPeriapsisUniverse* BuiltUniverse = nullptr;
 
 	// Collision ground under the vessels near the surface (body-fixed frame only), hidden.
 	UPROPERTY()
@@ -109,7 +130,7 @@ private:
 
 	// Changes requested from the physics step, applied on the next game-thread tick: bodies
 	// are not created or destroyed while Chaos is stepping.
-	TMap<int32, double> PendingAdds; // vessel, mass in kg
+	TMap<int32, Periapsis::Core::Vessel> PendingAdds; // the shape to build
 	TSet<int32> PendingRemovals;
 	TMap<int32, double> PendingMasses;
 

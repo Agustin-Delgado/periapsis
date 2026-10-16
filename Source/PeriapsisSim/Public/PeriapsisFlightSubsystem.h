@@ -22,6 +22,14 @@ public:
 
 	FPeriapsisUniverse* GetUniverse() const { return Universe.Get(); }
 
+	// The builder (M5). While it is open the universe stands still and is not drawn.
+	bool IsBuilding() const { return bBuilding; }
+	void EnterBuilder() { bBuilding = true; }
+	void LeaveBuilder() { bBuilding = false; }
+	// Replaces the universe with the launch pad scenario carrying this design, and closes the builder.
+	bool LaunchDesign(const Periapsis::Core::VesselDesign& Design);
+	static constexpr const TCHAR* LaunchScenario = TEXT("scenarios/launch_pad.json");
+
 	// USubsystem / FTickableGameObject
 	virtual void OnWorldBeginPlay(UWorld& InWorld) override;
 	virtual void Deinitialize() override;
@@ -35,4 +43,5 @@ protected:
 
 private:
 	TUniquePtr<FPeriapsisUniverse> Universe;
+	bool bBuilding = false;
 };

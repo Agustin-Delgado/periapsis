@@ -1,0 +1,27 @@
+{
+	"id": "decoupler_radial",
+	"name": "Radial decoupler",
+	"category": "decoupler",
+	"dry_mass_kg": 50,
+	"cost": 450,
+	"geometry": { "shape": "frustum", "length_m": 0.8, "bottom_radius_m": 0.15, "top_radius_m": 0.15 },
+	"attach_nodes": [
+		{
+			"id": "inner",
+			"pos": [-0.15, 0, 0],
+			"dir": [-1, 0, 0],
+			"size": 0
+		},
+		{
+			"id": "outer",
+			"pos": [0.15, 0, 0],
+			"dir": [1, 0, 0],
+			"size": 0
+		}
+	],
+	"surface_attach": false,
+	"joint_strength": { "force_n": 250000, "torque_nm": 150000 },
+	"modules": [
+		{ "type": "Decoupler", "ejection_impulse_ns": 1500, "crossfeed": false }
+	]
+}

@@ -5,20 +5,12 @@
 
 #include "PeriapsisCore/CelestialSystem.h"
 #include "PeriapsisCore/PatchedConics.h"
+#include "PeriapsisCore/Vessel.h"
 
 #include <vector>
 
 namespace Periapsis::Core
 {
-	// A point ship with a single engine (M2). Parts and stages replace this in M5.
-	struct ShipConfig
-	{
-		double DryMass = 0.0;    // kg
-		double FuelMass = 0.0;   // kg, at the start
-		double Thrust = 0.0;     // N, vacuum
-		double IspSeconds = 0.0; // s, vacuum
-	};
-
 	enum class FlightStatus
 	{
 		Flying,
@@ -47,7 +39,17 @@ namespace Periapsis::Core
 	PERIAPSISCORE_API StateVector ChangeFrame(const CelestialSystem& System, int FromBody, int ToBody,
 		const StateVector& State, double UniversalTime);
 
-	// The flight of one ship through the system.
+	// A piece that came off a flight (staging or a broken joint), ready to fly on its own.
+	struct SeparatedPiece
+	{
+		Vessel Piece;
+		int BodyIndex = kNoBody;
+		StateVector State; // its centre of mass, relative to BodyIndex
+		double Time = 0.0;
+		Vec3 Direction;    // where it points (it keeps the attitude it had)
+	};
+
+	// The flight of one vessel through the system. Its state is the vessel's centre of mass.
 	//
 	// Coasting is on rails: the state is evaluated on the predicted conic patches, which is
 	// exact at any time warp (no energy drift, no skipped encounters). Thrusting leaves the
@@ -64,6 +66,9 @@ namespace Periapsis::Core
 		static constexpr double kPredictionMatchPosition = 0.01; // m
 		static constexpr double kPredictionMatchVelocity = 1e-4; // m/s
 
+		PERIAPSISCORE_API Flight(const CelestialSystem& InSystem, Vessel InVessel, int InBodyIndex,
+			const StateVector& InState, double InTime, const PredictionSettings& InPrediction = {});
+		// The one-part ship of M2 (a 6 x 2 m hull with its engine lit).
 		PERIAPSISCORE_API Flight(const CelestialSystem& InSystem, const ShipConfig& InConfig, int InBodyIndex,
 			const StateVector& InState, double InTime, const PredictionSettings& InPrediction = {});
 
@@ -73,6 +78,8 @@ namespace Periapsis::Core
 		// Engine direction in the inertial frame of the current body. Normalized internally.
 		PERIAPSISCORE_API void SetThrustDirection(const Vec3& Direction);
 		const Vec3& ThrustDirection() const { return Direction; }
+		// The full attitude: the vessel frame's axes in the inertial frame of the current body.
+		Mat3 Attitude() const { return AttitudeFromForward(Direction); }
 
 		PERIAPSISCORE_API void Advance(double DeltaTime);
 
@@ -84,8 +91,15 @@ namespace Periapsis::Core
 
 		// Burns the engine at the current throttle for DeltaTime, for the physics bubble to
 		// apply, and returns the delta-v delivered along ThrustDirection() (m/s, rocket
-		// equation). Zero when the engine is off or the tanks are empty.
+		// equation). Zero when the engine is off or the tanks are empty. Joints that the thrust
+		// overloads break (see TakeSeparatedPieces).
 		PERIAPSISCORE_API double BurnFor(double DeltaTime);
+
+		// Fires the next stage (spec 5.5): engines light, decouplers push pieces away. The state
+		// moves to the new centre of mass. A landed vessel takes off.
+		PERIAPSISCORE_API void Stage();
+		// Pieces that came off since the last call, for the owner to fly as vessels of their own.
+		PERIAPSISCORE_API std::vector<SeparatedPiece> TakeSeparatedPieces();
 
 		// Puts the ship to rest on the ground where it is: from then on it turns with the body
 		// and costs nothing to simulate (spec 5.10). TakeOff() makes it fly again from there.
@@ -99,14 +113,17 @@ namespace Periapsis::Core
 		double Time() const { return CurrentTime; }
 		int BodyIndex() const { return CurrentBody; }
 		const StateVector& State() const { return CurrentState; } // relative to BodyIndex()
-		double Fuel() const { return FuelLeft; }
-		double Mass() const { return Config.DryMass + FuelLeft; }
+		double Fuel() const { return Craft.PropellantMass(); }
+		double Mass() const { return Craft.Mass(); }
 		FlightStatus Status() const { return CurrentStatus; }
-		const ShipConfig& Ship() const { return Config; }
+		const Vessel& GetVessel() const { return Craft; }
 		const CelestialSystem& System() const { return SystemRef; }
 
-		bool IsThrusting() const { return CurrentStatus == FlightStatus::Flying && ThrottleValue > 0.0 && FuelLeft > 0.0; }
+		bool IsThrusting() const { return CurrentStatus == FlightStatus::Flying && ThrottleValue > 0.0 && Craft.HasThrust(); }
+		// Vacuum delta-v left in every stage still to come, the current one included.
 		PERIAPSISCORE_API double RemainingDeltaV() const;
+		// Thrust at the current throttle, in vacuum.
+		double CurrentThrust() const { return Craft.Engines(ThrottleValue).Thrust; }
 
 		// Predicted conics from the current time on. Recomputed only when the ship has
 		// thrusted or left the patches computed before.
@@ -119,15 +136,17 @@ namespace Periapsis::Core
 		void FollowGround();
 		bool CheckSoiTransition();
 		bool MatchesPrediction() const;
+		void ApplySeparation(Separation&& Split);
+		void BreakOverloadedJoints();
 
 		const CelestialSystem& SystemRef;
-		ShipConfig Config;
+		Vessel Craft;
 		PredictionSettings Prediction;
+		std::vector<SeparatedPiece> Separated;
 
 		int CurrentBody;
 		StateVector CurrentState;
 		double CurrentTime;
-		double FuelLeft;
 		double ThrottleValue = 0.0;
 		Vec3 Direction{1.0, 0.0, 0.0};
 		FlightStatus CurrentStatus = FlightStatus::Flying;

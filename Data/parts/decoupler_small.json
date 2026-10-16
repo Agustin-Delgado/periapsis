@@ -1,0 +1,27 @@
+{
+	"id": "decoupler_small",
+	"name": "Small stack decoupler",
+	"category": "decoupler",
+	"dry_mass_kg": 40,
+	"cost": 400,
+	"geometry": { "shape": "frustum", "length_m": 0.2, "bottom_radius_m": 0.625, "top_radius_m": 0.625 },
+	"attach_nodes": [
+		{
+			"id": "top",
+			"pos": [0, 0, 0.1],
+			"dir": [0, 0, 1],
+			"size": 1
+		},
+		{
+			"id": "bottom",
+			"pos": [0, 0, -0.1],
+			"dir": [0, 0, -1],
+			"size": 1
+		}
+	],
+	"surface_attach": false,
+	"joint_strength": { "force_n": 1000000, "torque_nm": 500000 },
+	"modules": [
+		{ "type": "Decoupler", "ejection_impulse_ns": 2500, "crossfeed": false }
+	]
+}

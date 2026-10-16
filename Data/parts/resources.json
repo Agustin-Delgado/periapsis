@@ -1,0 +1,7 @@
+{
+	"_comment": "Resources that parts hold and engines burn, measured in kilograms. Engines say what share of their mass flow each propellant takes.",
+	"resources": [
+		{ "id": "fuel", "name": "Fuel" },
+		{ "id": "oxidizer", "name": "Oxidizer" }
+	]
+}

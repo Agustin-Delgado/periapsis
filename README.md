@@ -5,11 +5,11 @@ spirit of Kerbal Space Program. The orbital mechanics run in SI units and double
 Coasting is analytic ("on rails") and powered flight is integrated. Trajectories are
 predicted with patched conics across spheres of influence.
 
-**Status:** M4 of 12. You fly a ship around a planet with procedural relief, burn to change
-the orbit, time-warp up to 100,000x, reach the moon and land on either body. Near the ship, up
-to 4x warp, vessels are simulated by Chaos in a physics bubble with a floating origin, which
-turns with the planet near the ground. A spent stage flies 1.5 km ahead of you at the start.
-There is no rocket building yet. See [Roadmap](#roadmap).
+**Status:** M5 of 12. You build rockets from parts (tanks, engines, decouplers, pods) with
+delta-v and thrust-to-weight per stage shown as you build, launch them from a pad, stage them
+on the way up and watch the spent stages fall away. Planets have procedural relief and turn;
+you can reach the moon and land on either body. Near the ship, up to 4x warp, vessels are
+simulated by Chaos in a physics bubble with a floating origin. See [Roadmap](#roadmap).
 
 ## Requirements
 
@@ -58,6 +58,8 @@ You can also run it as a standalone window:
 | Right mouse drag | Rotate the camera |
 | Mouse wheel | Zoom |
 | `Tab` | Cycle the camera focus (ship, spent stage, planet, moon) |
+| `Space` | Fire the next stage |
+| `B` | Open the builder |
 | `R` | Restart the scenario |
 | `F1` | Show / hide help |
 
@@ -65,6 +67,29 @@ The HUD shows the current orbit (Ap, Pe, eccentricity, inclination, period) and 
 remaining delta-v. It also names the next sphere-of-influence change, shows whether the
 physics bubble is on and how far the other vessels are. Type
 `` ` `` then `stat fps` to see the frame rate.
+
+### Try it: build and launch
+
+Add `-Builder` to the launch command (or press `B` in flight). Press `O` to open the Trident, a
+three-stage rocket of 54 parts, or start from a pod with `N`:
+
+| Key | Action |
+|---|---|
+| `Up` / `Down` | Pick a part |
+| `Left` / `Right` | Pick where it goes (a free node, or the side of a round part) |
+| `Q` / `E`, `W` / `S` | Turn / slide the spot on a side |
+| `Y` | Symmetry (1, 2, 3, 4, 6, 8) |
+| `Enter` / `Delete` / `U` | Attach / remove (with what hangs below) / undo |
+| `[` / `]` / `T` | Move the target part to an earlier / later stage / stage automatically |
+| `F5` / `O` / `N` | Save to `Saved/Designs` / open the next design / new design |
+| `L` | Launch from the pad |
+| `B` / `Esc` | Back to flight |
+
+The right side shows delta-v, thrust-to-weight (on home), burn time and mass per stage, in
+vacuum and at sea level. On the pad, press `Z` for full throttle and `Space` to light the first
+stage; `Space` again drops the boosters. Hold `5` (radial out) for a while, then `1`
+(prograde) to bend the climb into an orbit. `-Scenario=scenarios/launch_pad.json` starts on the
+pad directly.
 
 ### Try it: a landing
 
@@ -88,11 +113,12 @@ From orbit: burn retrograde until the periapsis is well below the ground, coast,
 
 ```
 Source/
-  PeriapsisCore/    Orbital mechanics in pure standard C++ (no Unreal headers)
-  PeriapsisSim/     Bridge to Unreal: data loading, universe, warp, unit conversion
-  PeriapsisGame/    Game mode, focus-centered view, camera, HUD, input
+  PeriapsisCore/    Orbital mechanics, parts, vessels and staging in pure standard C++
+  PeriapsisSim/     Bridge to Unreal: data loading, universe, warp, builder, unit conversion
+  PeriapsisGame/    Game mode, focus-centered view, physics bubble, builder screen, HUD, input
   PeriapsisEditor/  Editor-only code and Play-In-Editor tests
-Data/               Bodies, terrain profiles and scenarios as JSON, validated on load
+Data/               Bodies, terrain profiles, parts, vessel designs and scenarios as JSON,
+                    validated on load
 Docs/               Technical specification and architecture decision records (adr/)
 ```
 
@@ -106,9 +132,11 @@ The tests are kept in a private repository and are not part of this one. There a
 suites: Core tests (CMake + doctest, no Unreal, about two seconds) covering Kepler solvers,
 universal-variable propagation, state ↔ elements conversion, maneuvers, patched-conic
 prediction, powered flight, the physics bubble's local frames, terrain noise, cube-sphere
-meshes and level-of-detail selection; and Unreal Automation tests (prefix `Periapsis.`)
-covering data validation, a moon transfer at 100,000x warp, rails/physics transitions, a
-descent from orbit to a landing, and Play-In-Editor runs that fly and land in Chaos. Their
+meshes, level-of-detail selection, part assembly, propellant flow, staging and joint loads;
+and Unreal Automation tests (prefix `Periapsis.`) covering data validation, a moon transfer at
+100,000x warp, rails/physics transitions, a descent from orbit to a landing, a three-stage
+rocket of 54 parts checked against the rocket equation worked out by hand and flown through its
+stages, the builder, and Play-In-Editor runs that fly, land and launch in Chaos. Their
 paths are listed in `.gitignore`. Each milestone's results are recorded in its ADR.
 
 ## Roadmap
@@ -120,7 +148,7 @@ The full plan is in the [technical specification](Docs/TechnicalSpecification_v0
 - [x] **M2** Spherical planet, point ship with thrust, drawn orbits, warp on rails, basic map
 - [x] **M3** Physics bubble: rails-to-physics transition, floating origin, local frame
 - [x] **M4** Spherical terrain: cube-sphere with LOD, local collision, landing
-- [ ] **M5** Ships made of parts: builder, parts, tanks, engines, stages, logical structure, delta-v
+- [x] **M5** Ships made of parts: builder, parts, tanks, engines, stages, logical structure, delta-v
 - [ ] **M6** Atmosphere and reentry: density, drag, heating, parachutes, Sky Atmosphere
 - [ ] **M7** Map and planning: full map, maneuver nodes, encounter markers, SOI transitions in the UI
 - [ ] **M8** Full system: 6 to 8 bodies in data, multiple SOIs, scale tuning

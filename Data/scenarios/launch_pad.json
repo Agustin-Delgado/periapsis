@@ -1,0 +1,16 @@
+{
+	"_comment": "M5: the three-stage Trident standing on the launch site of home, nothing lit. Space fires the next stage (core and boosters first), Z goes to full throttle. The builder launches its designs from here. Launch with -Scenario=scenarios/launch_pad.json.",
+	"system": "bodies/home_system.json",
+	"start_time_s": 0,
+	"ship": {
+		"design": "vessels/trident.json",
+		"attitude": "radial_out"
+	},
+	"start_surface": {
+		"body": "home",
+		"latitude_deg": 5.0,
+		"longitude_deg": 125.0,
+		"height_m": 0.3,
+		"vertical_speed_m_s": 0
+	}
+}
