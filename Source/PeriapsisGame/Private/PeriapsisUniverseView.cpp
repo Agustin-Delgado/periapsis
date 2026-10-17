@@ -66,8 +66,15 @@ APeriapsisUniverseView::APeriapsisUniverseView()
 	SunLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("Sun"));
 	SunLight->SetupAttachment(RootComponent);
 	SunLight->SetMobility(EComponentMobility::Movable);
-	SunLight->SetIntensity(6.0f);
+	SunLight->SetIntensity(3.0f); // with the fixed exposure below, white parts stay short of clipping and the ground keeps its colour
 	SunLight->SetRelativeRotation(FRotator(-25.0, 135.0, 0.0));
+	SunLight->ForwardShadingPriority = 1;
+	FillLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("Fill"));
+	FillLight->SetupAttachment(RootComponent);
+	FillLight->SetMobility(EComponentMobility::Movable);
+	FillLight->SetIntensity(0.6f);
+	FillLight->SetCastShadows(false);
+	FillLight->ForwardShadingPriority = 0;
 
 	// Space has no auto-exposure reference: a fixed exposure keeps the planets readable.
 	Exposure = CreateDefaultSubobject<UPostProcessComponent>(TEXT("Exposure"));
@@ -201,10 +208,11 @@ FVector APeriapsisUniverseView::FocusLocation(const FPeriapsisUniverse& Universe
 	return View.ToWorld(Universe.BodyPositionAt(Focus - Universe.NumVessels(), View.Time));
 }
 
-FVector APeriapsisUniverseView::CameraUp(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View) const
+FVector APeriapsisUniverseView::CameraUp(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View, double CameraDistance) const
 {
-	// Near the ground the camera's up is the local vertical; higher up it fades back to the
-	// world's, which keeps the orbits and the system steady on the screen.
+	// Close to a vessel the camera's up is its local vertical, at any altitude: the rocket stands
+	// upright on the screen. Zoomed out to see orbits it fades back to the world's, which keeps
+	// the orbits and the system steady.
 	const FVector WorldUp = FVector::UpVector;
 	if (Focus >= Universe.NumVessels())
 	{
@@ -212,9 +220,8 @@ FVector APeriapsisUniverseView::CameraUp(const FPeriapsisUniverse& Universe, con
 	}
 	const Flight& F = *Universe.GetVessel(Focus).Flight;
 	const CelestialBody& Body = Universe.GetSystem().Body(F.BodyIndex());
-	const double Altitude = Norm(F.State().Position) - Body.Radius;
-	const double Fade = FMath::Max(Universe.GetBodyInfo(F.BodyIndex()).RotatingFrameAltitude, 0.02 * Body.Radius);
-	const double Weight = FMath::Clamp(2.0 - Altitude / Fade, 0.0, 1.0); // local below Fade, world above twice that
+	const double Fade = FUnitBridge::ToUnreal(0.02 * Body.Radius); // 20 km on home
+	const double Weight = FMath::Clamp(2.0 - CameraDistance / Fade, 0.0, 1.0); // local closer than Fade, world beyond twice that
 	const FVector Local = View.DirectionToWorld(Normalized(F.State().Position));
 	return FMath::Lerp(WorldUp, Local, Weight).GetSafeNormal(UE_SMALL_NUMBER, WorldUp);
 }
@@ -263,6 +270,10 @@ void APeriapsisUniverseView::Tick(float DeltaSeconds)
 	}
 
 	SunLight->SetWorldRotation(View.DirectionToWorld(-SunDirection).Rotation());
+	if (const APlayerCameraManager* CameraManager = UGameplayStatics::GetPlayerCameraManager(this, 0))
+	{
+		FillLight->SetWorldRotation(CameraManager->GetCameraRotation());
+	}
 
 	APeriapsisTerrain* Terrain = GetTerrain();
 	for (int32 Index = 0; Index < BodyMeshes.Num(); ++Index)
@@ -290,7 +301,7 @@ void APeriapsisUniverseView::Tick(float DeltaSeconds)
 		Camera->SetActorLocation(Focused);
 		if (APeriapsisMapPawn* MapPawn = Cast<APeriapsisMapPawn>(Camera))
 		{
-			MapPawn->SetUp(CameraUp(*Universe, View));
+			MapPawn->SetUp(CameraUp(*Universe, View, MapPawn->GetDistance()));
 		}
 		// This view ticks after the camera took this frame's view (it needs the physics results):
 		// take it again, or the camera trails a fast rocket by a frame (7 m at 400 m/s).

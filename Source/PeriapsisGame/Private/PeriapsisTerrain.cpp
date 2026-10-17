@@ -2,6 +2,7 @@
 
 #include "Materials/MaterialInstanceDynamic.h"
 #include "PeriapsisBubble.h"
+#include "PeriapsisCore/Constants.h"
 #include "PeriapsisCore/Surface.h"
 #include "PeriapsisUniverse.h"
 #include "ProceduralMeshComponent.h"
@@ -17,6 +18,8 @@ APeriapsisTerrain::APeriapsisTerrain()
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Material(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 	BaseMaterial = Material.Object;
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> Painted(TEXT("/Engine/EngineDebugMaterials/VertexColorMaterial.VertexColorMaterial"));
+	VertexColorMaterial = Painted.Object;
 	Finished = MakeShared<TQueue<FFinished, EQueueMode::Mpsc>, ESPMode::ThreadSafe>();
 }
 
@@ -69,7 +72,8 @@ void APeriapsisTerrain::Rebuild(const FPeriapsisUniverse& Universe)
 		Terrain.BodyIndex = Index;
 		Terrain.Shape = MakeShared<const TerrainShape>(Body.Terrain); // the tasks keep their own copy alive
 		Terrain.Radius = Body.Radius;
-		if (BaseMaterial)
+		Terrain.Info = Universe.GetBodyInfo(Index);
+		if (BaseMaterial && !VertexColorMaterial)
 		{
 			Terrain.Material = UMaterialInstanceDynamic::Create(BaseMaterial, this);
 			Terrain.Material->SetVectorParameterValue(TEXT("Color"), Universe.GetBodyInfo(Index).Color);
@@ -96,16 +100,27 @@ void APeriapsisTerrain::ShowChunk(FBodyTerrain& Body, FChunk& Chunk)
 	const TerrainChunkMesh& Mesh = Chunk.Mesh;
 	TArray<FVector> Vertices;
 	TArray<FVector> Normals;
+	TArray<FColor> Colors;
 	Vertices.Reserve(static_cast<int32>(Mesh.Positions.size()));
 	Normals.Reserve(static_cast<int32>(Mesh.Normals.size()));
+	Colors.Reserve(static_cast<int32>(Mesh.Positions.size()));
 	for (size_t Index = 0; Index < Mesh.Positions.size(); ++Index)
 	{
 		Vertices.Add(FUnitBridge::ToUnreal(Mesh.Positions[Index]));
 		Normals.Add(FUnitBridge::DirectionToUnreal(Mesh.Normals[Index]));
+		// Painted by height and by how far the ground leans from level.
+		const Vec3 Up = Normalized(Mesh.Center + Mesh.Positions[Index]);
+		const double Slope = RadToDeg(std::acos(FMath::Clamp(Dot(Mesh.Normals[Index], Up), -1.0, 1.0)));
+		const double Height = Index < Mesh.Heights.size() ? Mesh.Heights[Index] : 0.0;
+		Colors.Add(Body.Info.GroundColor(Height, Slope).ToFColor(false)); // the material reads vertex colours as linear
 	}
 	const TArray<int32> Triangles(Mesh.Triangles.data(), static_cast<int32>(Mesh.Triangles.size()));
-	Component->CreateMeshSection(0, Vertices, Triangles, Normals, {}, {}, {}, false);
-	if (Body.Material)
+	Component->CreateMeshSection(0, Vertices, Triangles, Normals, {}, Colors, {}, false);
+	if (VertexColorMaterial)
+	{
+		Component->SetMaterial(0, VertexColorMaterial);
+	}
+	else if (Body.Material)
 	{
 		Component->SetMaterial(0, Body.Material);
 	}

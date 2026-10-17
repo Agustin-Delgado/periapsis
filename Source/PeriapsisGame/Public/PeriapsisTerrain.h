@@ -4,6 +4,7 @@
 #include "Containers/Queue.h"
 #include "GameFramework/Actor.h"
 #include "PeriapsisCore/TerrainMesh.h"
+#include "PeriapsisDataLoader.h"
 #include "PeriapsisTerrain.generated.h"
 
 class FPeriapsisUniverse;
@@ -58,7 +59,8 @@ private:
 		double Radius = 0.0;
 		TMap<uint64, TSharedPtr<FChunk>> Chunks; // generated
 		TSet<uint64> InFlight;
-		TObjectPtr<UMaterialInstanceDynamic> Material = nullptr;
+		TObjectPtr<UMaterialInstanceDynamic> Material = nullptr; // when there is no vertex colour material
+		FPeriapsisBodyInfo Info; // the ground's colours
 	};
 
 	struct FFinished
@@ -74,6 +76,10 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UMaterialInterface> BaseMaterial;
+
+	// Lit, with the vertices' colour as its base colour: the ground is painted per vertex.
+	UPROPERTY()
+	TObjectPtr<UMaterialInterface> VertexColorMaterial;
 
 	// Keeps the components alive for the garbage collector.
 	UPROPERTY()

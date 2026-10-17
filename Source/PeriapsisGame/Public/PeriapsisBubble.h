@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "PeriapsisCore/LocalFrame.h"
+#include "PeriapsisCore/Parts.h"
 #include "PeriapsisCore/Vec3.h"
 #include "PeriapsisPhysicsScene.h"
 #include "PeriapsisBubble.generated.h"
@@ -36,10 +37,10 @@ struct PERIAPSISGAME_API FPeriapsisViewTransform
 	FQuat AttitudeToWorld(const Periapsis::Core::Mat3& Attitude) const;
 };
 
-// The colour a part is drawn with, by category.
-PERIAPSISGAME_API FLinearColor PartColor(const FString& Category);
+// The colour of a piece of a part's look, by the part's category for its body.
+PERIAPSISGAME_API FLinearColor PartColor(const FString& Category, Periapsis::Core::PartPaint Paint);
 
-// Fills a procedural mesh with a vessel's parts: one section per category (coloured), and a
+// Fills a procedural mesh with a vessel's parts: one section per colour, and a
 // convex collision shape per part, in the vessel frame converted to Unreal units.
 PERIAPSISGAME_API void BuildVesselMesh(UProceduralMeshComponent* Mesh, const Periapsis::Core::Vessel& Vessel, UMaterialInterface* Material,
 	bool bCollision);

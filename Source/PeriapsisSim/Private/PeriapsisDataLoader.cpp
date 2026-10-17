@@ -48,7 +48,64 @@ namespace
 	}
 
 	// "terrain": {"seed": N, "profile": "terrain/x.json"}; the profile lists the noise layers.
-	void ParseTerrain(const FJsonObject& T, const FString& DataRoot, const FString& Where, CelestialBody& Body, TArray<FString>& OutErrors)
+	bool ReadColor(const FJsonObject& O, const TCHAR* Field, const FString& Where, FLinearColor& Out, TArray<FString>& OutErrors)
+	{
+		const TArray<TSharedPtr<FJsonValue>>* Values = nullptr;
+		if (!O.TryGetArrayField(Field, Values) || Values->Num() != 3)
+		{
+			OutErrors.Add(FString::Printf(TEXT("%s: '%s' needs 3 numbers"), *Where, Field));
+			return false;
+		}
+		Out = FLinearColor((*Values)[0]->AsNumber(), (*Values)[1]->AsNumber(), (*Values)[2]->AsNumber());
+		return true;
+	}
+
+	// "ground_colors": {"by_height": [{"height_m": h, "color": [r, g, b]}, ...],
+	//                   "steep": {"slope_deg": s, "color": [r, g, b]}}
+	void ParseGroundColors(const FJsonObject& Profile, const FString& Where, FPeriapsisBodyInfo& Info, TArray<FString>& OutErrors)
+	{
+		const TSharedPtr<FJsonObject>* Colors = nullptr;
+		if (!Profile.TryGetObjectField(TEXT("ground_colors"), Colors))
+		{
+			return;
+		}
+		const FString ColorsWhere = Where + TEXT(", ground_colors");
+		const TArray<TSharedPtr<FJsonValue>>* Stops = nullptr;
+		if ((*Colors)->TryGetArrayField(TEXT("by_height"), Stops))
+		{
+			for (int32 Index = 0; Index < Stops->Num(); ++Index)
+			{
+				const FString StopWhere = FString::Printf(TEXT("%s.by_height[%d]"), *ColorsWhere, Index);
+				const TSharedPtr<FJsonObject>* Stop = nullptr;
+				double Height = 0.0;
+				FLinearColor Color;
+				if (!(*Stops)[Index]->TryGetObject(Stop) || !ReadNumber(**Stop, TEXT("height_m"), StopWhere, Height, OutErrors)
+					|| !ReadColor(**Stop, TEXT("color"), StopWhere, Color, OutErrors))
+				{
+					continue;
+				}
+				if (!Info.GroundColors.IsEmpty() && Height <= Info.GroundColors.Last().Key)
+				{
+					OutErrors.Add(FString::Printf(TEXT("%s: heights must increase"), *StopWhere));
+				}
+				Info.GroundColors.Emplace(Height, Color);
+			}
+		}
+		const TSharedPtr<FJsonObject>* Steep = nullptr;
+		if ((*Colors)->TryGetObjectField(TEXT("steep"), Steep))
+		{
+			const FString SteepWhere = ColorsWhere + TEXT(".steep");
+			ReadNumber(**Steep, TEXT("slope_deg"), SteepWhere, Info.SteepSlopeDeg, OutErrors);
+			ReadColor(**Steep, TEXT("color"), SteepWhere, Info.SteepColor, OutErrors);
+			if (!(Info.SteepSlopeDeg > 0.0 && Info.SteepSlopeDeg < 90.0))
+			{
+				OutErrors.Add(FString::Printf(TEXT("%s: 'slope_deg' must be between 0 and 90"), *SteepWhere));
+			}
+		}
+	}
+
+	void ParseTerrain(const FJsonObject& T, const FString& DataRoot, const FString& Where, CelestialBody& Body, FPeriapsisBodyInfo& Info,
+		TArray<FString>& OutErrors)
 	{
 		double Seed = 0.0;
 		T.TryGetNumberField(TEXT("seed"), Seed);
@@ -72,6 +129,7 @@ namespace
 			OutErrors.Add(FString::Printf(TEXT("%s: missing 'layers'"), *ProfileWhere));
 			return;
 		}
+		ParseGroundColors(*Profile, ProfileWhere, Info, OutErrors);
 
 		std::vector<TerrainLayer> Layers;
 		for (int32 Index = 0; Index < LayerValues->Num(); ++Index)
@@ -217,6 +275,32 @@ namespace
 
 	// The side of a part as a design file names it.
 	constexpr const TCHAR* SurfaceNode = TEXT("surface");
+}
+
+FLinearColor FPeriapsisBodyInfo::GroundColor(double Height, double SlopeDeg) const
+{
+	FLinearColor Ground = Color; // the display colour when the profile names none
+	if (!GroundColors.IsEmpty() && Height <= GroundColors[0].Key)
+	{
+		Ground = GroundColors[0].Value;
+	}
+	else if (!GroundColors.IsEmpty())
+	{
+		Ground = GroundColors.Last().Value;
+		for (int32 Index = 1; Index < GroundColors.Num(); ++Index)
+		{
+			if (Height < GroundColors[Index].Key)
+			{
+				const TPair<double, FLinearColor>& Low = GroundColors[Index - 1];
+				const TPair<double, FLinearColor>& High = GroundColors[Index];
+				Ground = FMath::Lerp(Low.Value, High.Value, static_cast<float>((Height - Low.Key) / (High.Key - Low.Key)));
+				break;
+			}
+		}
+	}
+	// Rock shows through over a few degrees around the steep slope.
+	const float Steep = FMath::SmoothStep(static_cast<float>(SteepSlopeDeg - 4.0), static_cast<float>(SteepSlopeDeg + 4.0), static_cast<float>(SlopeDeg));
+	return FMath::Lerp(Ground, SteepColor, Steep);
 }
 
 bool PeriapsisData::ParsePart(const FString& Json, const PartCatalog& Resources, PartDefinition& Out, TArray<FString>& OutErrors)
@@ -789,7 +873,7 @@ bool PeriapsisData::ParseSystem(const FString& Json, FPeriapsisSystemData& Out, 
 		const TSharedPtr<FJsonObject>* TerrainObject = nullptr;
 		if (B.TryGetObjectField(TEXT("terrain"), TerrainObject))
 		{
-			ParseTerrain(**TerrainObject, Root, Where, Body, OutErrors);
+			ParseTerrain(**TerrainObject, Root, Where, Body, Info, OutErrors);
 		}
 		Info.RotatingFrameAltitude = Body.Terrain.MaxHeight() + 15000.0;
 		B.TryGetNumberField(TEXT("rotating_frame_altitude_m"), Info.RotatingFrameAltitude);

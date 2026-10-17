@@ -15,6 +15,14 @@ struct FPeriapsisBodyInfo
 	FLinearColor Color = FLinearColor::White;
 	// Below this altitude the physics bubble turns with the body (ADR 0004).
 	double RotatingFrameAltitude = 0.0; // m
+	// The ground's colour against height (stops in increasing height, blended between them),
+	// and the colour of slopes steeper than SteepSlopeDeg. Empty: the display colour.
+	TArray<TPair<double, FLinearColor>> GroundColors;
+	FLinearColor SteepColor = FLinearColor::White;
+	double SteepSlopeDeg = 90.0;
+
+	// The ground's colour at a height (m above the radius) and slope (deg from level).
+	PERIAPSISSIM_API FLinearColor GroundColor(double Height, double SlopeDeg) const;
 };
 
 struct FPeriapsisSystemData

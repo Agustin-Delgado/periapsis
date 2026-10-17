@@ -145,6 +145,19 @@ with every state finite). What the screen showed and was fixed:
   the target arrow draws over the parts.
 - HUD text had no shadow (unreadable over the bright ground) and its columns were padded with
   spaces in a proportional font; cells are tab-separated and aligned by measured width.
+- Parts were one flat colour per category, so tanks, pods and engines read alike. Each part is now
+  drawn from a look built in the Core (`BuildPartLook`) inside its colliding solid: dark rings at
+  the joints of tanks and adapters, a housing, neck and open bell on engines (rust inside), a
+  window band and heat shield on pods, a seam on decouplers, a red tip on noses.
+- The ground was the body's one display colour, light blue on home. Terrain profiles now list
+  `ground_colors` (stops by height, blended, and a steep-slope colour); the terrain paints them
+  per vertex, with the engine's lit vertex-colour material.
+- The scene was overexposed (white parts clipped, the ground washed out): the sun went from 6 to
+  3, and a faint shadowless light from the camera lights the side away from the sun, since there
+  is no sky yet.
+- The camera's up follows the local vertical while the camera is close to the vessel (within 2 %
+  of the body's radius, fading out at 4 %), at any altitude; zoomed out to the orbits it is the
+  world's again.
 
 ## Pending
 
@@ -152,7 +165,4 @@ with every state finite). What the screen showed and was fixed:
 - Torques: reaction wheels, gimbal, off-axis thrust (only the axial part of each engine's
   thrust counts now).
 - Debris lifetimes: spent stages stay as vessels until they crash or leave the bubble.
-- The builder's mouse interaction and its look (materials, a pad) are for a person. Parts are one
-  flat grey per category: tanks, pods and engines read alike, and engines have no bell.
-- Above the rotating-frame altitude the camera's up returns to the world's Z, so a rocket climbing
-  through it appears to tilt on screen.
+- The builder's mouse interaction, real materials and a launch pad are for a person.

@@ -56,27 +56,37 @@ FQuat FPeriapsisViewTransform::AttitudeToWorld(const Mat3& Attitude) const
 	return FMatrix(DirectionToWorld(Attitude.X), -DirectionToWorld(Attitude.Y), DirectionToWorld(Attitude.Z), FVector::ZeroVector).ToQuat();
 }
 
-FLinearColor PartColor(const FString& Category)
+FLinearColor PartColor(const FString& Category, PartPaint Paint)
 {
+	switch (Paint)
+	{
+	case PartPaint::Trim: return FLinearColor(0.05f, 0.05f, 0.06f);
+	case PartPaint::Bell: return FLinearColor(0.12f, 0.11f, 0.1f);
+	case PartPaint::Inside: return FLinearColor(0.35f, 0.12f, 0.04f);
+	case PartPaint::Shield: return FLinearColor(0.16f, 0.09f, 0.05f);
+	case PartPaint::Window: return FLinearColor(0.02f, 0.04f, 0.08f);
+	case PartPaint::Accent: return FLinearColor(0.7f, 0.06f, 0.04f);
+	case PartPaint::Body: break;
+	}
 	if (Category == TEXT("command"))
 	{
-		return FLinearColor(0.72f, 0.76f, 0.84f);
+		return FLinearColor(0.42f, 0.45f, 0.5f);
 	}
 	if (Category == TEXT("tank"))
 	{
-		return FLinearColor(0.9f, 0.9f, 0.88f);
+		return FLinearColor(0.85f, 0.85f, 0.82f);
 	}
 	if (Category == TEXT("engine"))
 	{
-		return FLinearColor(0.32f, 0.32f, 0.36f);
+		return FLinearColor(0.45f, 0.46f, 0.48f);
 	}
 	if (Category == TEXT("decoupler"))
 	{
-		return FLinearColor(0.95f, 0.62f, 0.12f);
+		return FLinearColor(0.9f, 0.55f, 0.05f);
 	}
 	if (Category == TEXT("structure"))
 	{
-		return FLinearColor(0.5f, 0.53f, 0.58f);
+		return FLinearColor(0.75f, 0.76f, 0.78f);
 	}
 	return FLinearColor(0.8f, 0.45f, 0.2f);
 }
@@ -102,35 +112,41 @@ void BuildPartsMesh(UProceduralMeshComponent* Mesh, const PartCatalog& Catalog, 
 		FLinearColor Color;
 	};
 	TArray<FSection> Sections;
-	TMap<FString, int32> SectionOfCategory;
+	TMap<FLinearColor, int32> SectionOfColor;
 	TArray<TArray<FVector>> Hulls;
 	for (const PartInstance& Placed : Parts)
 	{
 		const PartDefinition& Part = Catalog.Parts[Placed.Part];
 		const FString Category = UTF8_TO_TCHAR(Part.Category.c_str());
-		int32 SectionIndex = INDEX_NONE;
-		if (const int32* Found = SectionOfCategory.Find(Category))
+		for (const PartLookPiece& Piece : BuildPartLook(Part, PartSegments))
 		{
-			SectionIndex = *Found;
-		}
-		else
-		{
-			SectionIndex = Sections.Num();
-			SectionOfCategory.Add(Category, SectionIndex);
-			Sections.AddDefaulted_GetRef().Color = Tint ? *Tint : PartColor(Category);
-		}
-		FSection& Section = Sections[SectionIndex];
-		// Mirrored like the terrain, with the same triangle order: the outside shows in Unreal.
-		const PartMesh Solid = BuildPartMesh(Part.Geometry, PartSegments);
-		const int32 Base = Section.Vertices.Num();
-		for (size_t Vertex = 0; Vertex < Solid.Positions.size(); ++Vertex)
-		{
-			Section.Vertices.Add(FUnitBridge::ToUnreal(Placed.Position + Placed.Rotation * Solid.Positions[Vertex]));
-			Section.Normals.Add(FUnitBridge::DirectionToUnreal(Placed.Rotation * Solid.Normals[Vertex]));
-		}
-		for (const int Corner : Solid.Triangles)
-		{
-			Section.Triangles.Add(Base + Corner);
+			// The preview keeps the paints apart, a shade lighter or darker, so it reads as parts.
+			const FLinearColor Painted = PartColor(Category, Piece.Paint);
+			const FLinearColor Color = Tint ? *Tint * (0.45f + 0.55f * Painted.GetLuminance()) : Painted;
+			int32 SectionIndex = INDEX_NONE;
+			if (const int32* Found = SectionOfColor.Find(Color))
+			{
+				SectionIndex = *Found;
+			}
+			else
+			{
+				SectionIndex = Sections.Num();
+				SectionOfColor.Add(Color, SectionIndex);
+				Sections.AddDefaulted_GetRef().Color = Color;
+			}
+			FSection& Section = Sections[SectionIndex];
+			// Mirrored like the terrain, with the same triangle order: the outside shows in Unreal.
+			const PartMesh& Solid = Piece.Mesh;
+			const int32 Base = Section.Vertices.Num();
+			for (size_t Vertex = 0; Vertex < Solid.Positions.size(); ++Vertex)
+			{
+				Section.Vertices.Add(FUnitBridge::ToUnreal(Placed.Position + Placed.Rotation * Solid.Positions[Vertex]));
+				Section.Normals.Add(FUnitBridge::DirectionToUnreal(Placed.Rotation * Solid.Normals[Vertex]));
+			}
+			for (const int Corner : Solid.Triangles)
+			{
+				Section.Triangles.Add(Base + Corner);
+			}
 		}
 		if (bCollision)
 		{

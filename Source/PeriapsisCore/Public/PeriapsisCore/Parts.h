@@ -133,4 +133,27 @@ namespace Periapsis::Core
 		std::vector<int> Triangles;
 	};
 	PERIAPSISCORE_API PartMesh BuildPartMesh(const PartGeometry& Geometry, int Segments);
+
+	// What a piece of a part's look is painted with; the view picks the colours.
+	enum class PartPaint
+	{
+		Body,   // the part's own colour (by category)
+		Trim,   // dark rings at the joints, a docking ring
+		Bell,   // an engine's nozzle, outside
+		Inside, // an engine's nozzle, inside
+		Shield, // a pod's heat shield
+		Window, // a pod's window band
+		Accent, // the tip of a nose cone
+	};
+
+	struct PartLookPiece
+	{
+		PartPaint Paint = PartPaint::Body;
+		PartMesh Mesh;
+	};
+
+	// How a part is drawn: its solid, detailed by category (rings on tanks, a bell on engines, a
+	// heat shield on pods), never outside the solid that collides. One piece per paint.
+	// Counter-clockwise seen from outside, like BuildPartMesh.
+	PERIAPSISCORE_API std::vector<PartLookPiece> BuildPartLook(const PartDefinition& Part, int Segments);
 }

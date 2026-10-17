@@ -57,7 +57,7 @@ private:
 	FVector VesselLocation(const FPeriapsisUniverse& Universe, int32 Vessel, const FPeriapsisViewTransform& View) const;
 	FVector FocusLocation(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View) const;
 	// Up for the camera's orbit, in the world.
-	FVector CameraUp(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View) const;
+	FVector CameraUp(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View, double CameraDistance) const;
 	double ScreenScale(const FVector& At) const;
 
 	UPROPERTY()
@@ -71,6 +71,11 @@ private:
 
 	UPROPERTY()
 	TObjectPtr<UDirectionalLightComponent> SunLight;
+
+	// Faint, from the camera, without shadows: there is no sky to light the side away from the
+	// sun, which would otherwise be black.
+	UPROPERTY()
+	TObjectPtr<UDirectionalLightComponent> FillLight;
 
 	UPROPERTY()
 	TObjectPtr<UPostProcessComponent> Exposure;

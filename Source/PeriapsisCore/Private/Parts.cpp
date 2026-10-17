@@ -329,4 +329,193 @@ namespace Periapsis::Core
 		AddCap(-Half, Rb, -1.0);
 		return Mesh;
 	}
+
+	namespace
+	{
+		struct ProfilePoint
+		{
+			double R = 0.0;
+			double Z = 0.0;
+			PartPaint Paint = PartPaint::Body; // of the stretch from this point to the next
+		};
+
+		PartMesh& MeshFor(std::vector<PartLookPiece>& Pieces, PartPaint Paint)
+		{
+			for (PartLookPiece& Piece : Pieces)
+			{
+				if (Piece.Paint == Paint)
+				{
+					return Piece.Mesh;
+				}
+			}
+			Pieces.push_back({Paint, {}});
+			return Pieces.back().Mesh;
+		}
+
+		// Turns a profile (radius against height, in order) about Z. A stretch that goes down
+		// faces out and one that goes up faces in, so an open nozzle shows inside and out.
+		void Lathe(const std::vector<ProfilePoint>& Profile, int Segments, std::vector<PartLookPiece>& Pieces)
+		{
+			for (size_t Index = 0; Index + 1 < Profile.size(); ++Index)
+			{
+				const ProfilePoint& A = Profile[Index];
+				const ProfilePoint& B = Profile[Index + 1];
+				const double DR = B.R - A.R;
+				const double DZ = B.Z - A.Z;
+				const double Span = std::sqrt(DR * DR + DZ * DZ);
+				if (Span < 1e-9)
+				{
+					continue;
+				}
+				PartMesh& Mesh = MeshFor(Pieces, A.Paint);
+				for (int Step = 0; Step < Segments; ++Step)
+				{
+					const double A0 = kTwoPi * Step / Segments;
+					const double A1 = kTwoPi * (Step + 1) / Segments;
+					const Vec3 D0{std::cos(A0), std::sin(A0), 0.0};
+					const Vec3 D1{std::cos(A1), std::sin(A1), 0.0};
+					const Vec3 N0 = D0 * (-DZ / Span) + Vec3{0.0, 0.0, DR / Span};
+					const Vec3 N1 = D1 * (-DZ / Span) + Vec3{0.0, 0.0, DR / Span};
+					const int Base = static_cast<int>(Mesh.Positions.size());
+					Mesh.Positions.insert(Mesh.Positions.end(), {D0 * B.R + Vec3{0.0, 0.0, B.Z}, D1 * B.R + Vec3{0.0, 0.0, B.Z},
+						D1 * A.R + Vec3{0.0, 0.0, A.Z}, D0 * A.R + Vec3{0.0, 0.0, A.Z}});
+					Mesh.Normals.insert(Mesh.Normals.end(), {N0, N1, N1, N0});
+					Mesh.Triangles.insert(Mesh.Triangles.end(), {Base, Base + 1, Base + 2, Base, Base + 2, Base + 3});
+				}
+			}
+		}
+
+		// A flat disc facing +Z (bUp) or -Z.
+		void Disc(double Z, double Radius, bool bUp, PartPaint Paint, int Segments, std::vector<PartLookPiece>& Pieces)
+		{
+			if (Radius < 1e-6)
+			{
+				return;
+			}
+			PartMesh& Mesh = MeshFor(Pieces, Paint);
+			const Vec3 N{0.0, 0.0, bUp ? 1.0 : -1.0};
+			const int Center = static_cast<int>(Mesh.Positions.size());
+			Mesh.Positions.push_back({0.0, 0.0, Z});
+			Mesh.Normals.push_back(N);
+			for (int Step = 0; Step < Segments; ++Step)
+			{
+				const double Angle = kTwoPi * Step / Segments;
+				Mesh.Positions.push_back({Radius * std::cos(Angle), Radius * std::sin(Angle), Z});
+				Mesh.Normals.push_back(N);
+			}
+			for (int Step = 0; Step < Segments; ++Step)
+			{
+				const int A = Center + 1 + Step;
+				const int B = Center + 1 + (Step + 1) % Segments;
+				if (bUp)
+				{
+					Mesh.Triangles.insert(Mesh.Triangles.end(), {Center, A, B});
+				}
+				else
+				{
+					Mesh.Triangles.insert(Mesh.Triangles.end(), {Center, B, A});
+				}
+			}
+		}
+	}
+
+	std::vector<PartLookPiece> BuildPartLook(const PartDefinition& Part, int Segments)
+	{
+		std::vector<PartLookPiece> Pieces;
+		const PartGeometry& G = Part.Geometry;
+		if (G.Shape == PartGeometry::EShape::Box)
+		{
+			Pieces.push_back({PartPaint::Body, BuildPartMesh(G, Segments)});
+			return Pieces;
+		}
+		const double L = G.Length;
+		const double Top = 0.5 * L;
+		const double Bottom = -0.5 * L;
+		auto R = [&](double Z) { return G.RadiusAt(Z); };
+		// Rings at the ends, about as thick as a joint looks next to the part.
+		const double Ring = std::min(0.1 * L, 0.12);
+
+		std::vector<ProfilePoint> Profile;
+		// Clamped to the solid: what is drawn never sticks out of what collides.
+		auto Point = [&](double Radius, double Z, PartPaint Paint) { Profile.push_back({std::min(Radius, R(Z)), Z, Paint}); };
+		if (Part.Category == "engine")
+		{
+			// A housing on top, a neck, then a bell flaring out to the bottom radius, open below.
+			const double Housing = Top - 0.3 * L;
+			const double Throat = Top - 0.42 * L;
+			const double Neck = 0.5 * std::min(G.TopRadius, G.BottomRadius);
+			const double Wall = 0.04 * G.BottomRadius;
+			constexpr int BellSteps = 8;
+			auto BellRadius = [&](double S) { return Neck + (G.BottomRadius - Neck) * std::sqrt(S); };
+			Point(G.TopRadius, Top, PartPaint::Trim);
+			Point(G.TopRadius, Top - Ring, PartPaint::Body);
+			Point(0.9 * G.TopRadius, Housing, PartPaint::Trim);
+			for (int Step = 0; Step <= BellSteps; ++Step)
+			{
+				const double S = static_cast<double>(Step) / BellSteps;
+				Point(BellRadius(S), Throat + (Bottom - Throat) * S, PartPaint::Bell);
+			}
+			Profile.back().Paint = PartPaint::Inside; // the lip, then up the inside
+			for (int Step = BellSteps; Step >= 0; --Step)
+			{
+				const double S = static_cast<double>(Step) / BellSteps;
+				Point(std::max(BellRadius(S) - Wall, 0.0), Throat + (Bottom - Throat) * S, PartPaint::Inside);
+			}
+			Lathe(Profile, Segments, Pieces);
+			Disc(Top, R(Top), true, PartPaint::Trim, Segments, Pieces);
+			Disc(Throat, std::min(std::max(Neck - Wall, 0.0), R(Throat)), false, PartPaint::Inside, Segments, Pieces);
+			return Pieces;
+		}
+		if (Part.Category == "command")
+		{
+			// A docking ring on top, a window band, a heat shield underneath.
+			const double Shield = Bottom + std::min(0.1 * L, 0.15);
+			const double WindowTop = Top - 0.22 * L;
+			const double WindowBottom = Top - 0.34 * L;
+			Point(R(Top), Top, PartPaint::Body);
+			Point(R(WindowTop), WindowTop, PartPaint::Window);
+			Point(R(WindowBottom), WindowBottom, PartPaint::Body);
+			Point(R(Shield), Shield, PartPaint::Shield);
+			Point(R(Bottom), Bottom, PartPaint::Shield);
+			Lathe(Profile, Segments, Pieces);
+			Disc(Top, R(Top), true, PartPaint::Trim, Segments, Pieces);
+			Disc(Bottom, R(Bottom), false, PartPaint::Shield, Segments, Pieces);
+			return Pieces;
+		}
+		if (Part.Category == "decoupler")
+		{
+			// Two halves with a dark seam where they part.
+			const double Seam = 0.12 * L;
+			Point(R(Top), Top, PartPaint::Body);
+			Point(R(Seam), Seam, PartPaint::Trim);
+			Point(R(-Seam), -Seam, PartPaint::Body);
+			Point(R(Bottom), Bottom, PartPaint::Body);
+			Lathe(Profile, Segments, Pieces);
+			Disc(Top, R(Top), true, PartPaint::Body, Segments, Pieces);
+			Disc(Bottom, R(Bottom), false, PartPaint::Body, Segments, Pieces);
+			return Pieces;
+		}
+		if (G.TopRadius < 0.25 * G.BottomRadius)
+		{
+			// A nose: the tip painted, a ring at the base.
+			const double Tip = Top - 0.22 * L;
+			Point(R(Top), Top, PartPaint::Accent);
+			Point(R(Tip), Tip, PartPaint::Body);
+			Point(R(Bottom + Ring), Bottom + Ring, PartPaint::Trim);
+			Point(R(Bottom), Bottom, PartPaint::Trim);
+			Lathe(Profile, Segments, Pieces);
+			Disc(Top, R(Top), true, PartPaint::Accent, Segments, Pieces);
+			Disc(Bottom, R(Bottom), false, PartPaint::Trim, Segments, Pieces);
+			return Pieces;
+		}
+		// Tanks, adapters and the rest: dark rings at both joints.
+		Point(R(Top), Top, PartPaint::Trim);
+		Point(R(Top - Ring), Top - Ring, PartPaint::Body);
+		Point(R(Bottom + Ring), Bottom + Ring, PartPaint::Trim);
+		Point(R(Bottom), Bottom, PartPaint::Trim);
+		Lathe(Profile, Segments, Pieces);
+		Disc(Top, R(Top), true, PartPaint::Trim, Segments, Pieces);
+		Disc(Bottom, R(Bottom), false, PartPaint::Trim, Segments, Pieces);
+		return Pieces;
+	}
 }

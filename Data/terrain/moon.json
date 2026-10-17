@@ -4,5 +4,13 @@
 		{ "type": "fbm", "amplitude_m": 1500, "wavelength_m": 150000, "octaves": 13 },
 		{ "type": "ridged", "amplitude_m": 600, "wavelength_m": 50000, "octaves": 6 },
 		{ "type": "fbm", "amplitude_m": 8, "wavelength_m": 400, "octaves": 5 }
-	]
+	],
+	"ground_colors": {
+		"by_height": [
+			{ "height_m": -1500, "color": [0.2, 0.2, 0.19] },
+			{ "height_m": 0, "color": [0.36, 0.36, 0.34] },
+			{ "height_m": 1800, "color": [0.5, 0.5, 0.48] }
+		],
+		"steep": { "slope_deg": 28, "color": [0.26, 0.25, 0.24] }
+	}
 }
