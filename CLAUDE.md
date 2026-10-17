@@ -10,9 +10,11 @@ The specification is `Docs/TechnicalSpecification_v0.1.md` (the original, in Spa
 - **Everything in the repository is in English:** code, comments, names, docs, data and
   commit messages. Only the conversation with the user is in Spanish.
 - **C++ first.** Blueprints only for thin glue (UI, materials).
-- **Don't edit Unreal binaries** (`.uasset`, `.umap`, textures, meshes): they can't be
-  reviewed in Git or edited properly by an agent. Whatever can be expressed as data goes in
-  `Data/`.
+- **Unreal binaries are never edited by hand** (`.uasset`, `.umap`, textures, meshes): they
+  can't be reviewed in Git. A binary is allowed only as the output of a script in `Tools/Assets/`
+  that is committed with it and regenerates it; the script is the source and is what gets
+  reviewed (ADR 0006). Part meshes stay procedural C++ (mass and collision come from the same
+  data). Whatever can be expressed as data goes in `Data/`.
 - **SI units and `double`** throughout the simulation (m, kg, s, N). The conversion to Unreal
   centimeters lives **only** in `FUnitBridge` (`Source/PeriapsisSim/Public/UnitBridge.h`).
 - **The Core includes no Unreal headers.** `Source/PeriapsisCore` is pure standard C++; the
@@ -69,8 +71,10 @@ It builds, tests are green, no new warnings, data is validated. Everything measu
 
 ## Agent limits
 
-The agent doesn't see the viewport. Visuals are validated by a person: the agent leaves debug
-lines and text and clear logs. Level assembly, materials and Niagara are done by a person.
+The agent sees the viewport only through screenshots it takes itself (warning the user first),
+so the final judgement on visuals is a person's: the agent leaves debug lines and text and clear
+logs. There is no artist: parts, materials, sky and effects are made by the agent in code and
+generator scripts; textures can come from Quixel Megascans (licensed for use in Unreal).
 
 ## Status
 
