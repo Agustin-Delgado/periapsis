@@ -27,6 +27,8 @@ public:
 	FPeriapsisBuilder* GetBuilder() const { return Builder.Get(); }
 	// Call after any edit: redraws the design.
 	void MarkChanged() { bDirty = true; }
+	// Fits the camera to the design again on the next tick.
+	void RefitCamera() { FramedRadius = 0.0; }
 
 	// New design: a command pod on its own.
 	void NewDesign();
@@ -66,4 +68,5 @@ private:
 	double LastSideHeight = 0.0;
 	int32 LastSymmetry = 0;
 	int32 NextDesignToLoad = 0;
+	double FramedRadius = 0.0; // m: the size the camera distance was last fitted to
 };

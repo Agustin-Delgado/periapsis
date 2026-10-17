@@ -975,6 +975,7 @@ bool PeriapsisData::ParseScenario(const FString& Json, const FString& DataRoot, 
 			{TEXT("radial_in"), AttitudeMode::RadialIn},
 			{TEXT("surface_prograde"), AttitudeMode::SurfacePrograde},
 			{TEXT("surface_retrograde"), AttitudeMode::SurfaceRetrograde},
+			{TEXT("up"), AttitudeMode::Up},
 		};
 		const TPair<const TCHAR*, AttitudeMode>* Found = Algo::FindByPredicate(Modes, [&](const auto& Mode) { return Attitude == Mode.Key; });
 		if (Found)

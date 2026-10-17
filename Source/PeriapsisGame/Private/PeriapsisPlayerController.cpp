@@ -6,6 +6,7 @@
 #include "PeriapsisMapPawn.h"
 #include "PeriapsisUniverse.h"
 #include "PeriapsisUniverseView.h"
+#include "UnitBridge.h"
 
 using Periapsis::Core::AttitudeMode;
 
@@ -184,11 +185,20 @@ void APeriapsisPlayerController::PlayerTick(float DeltaTime)
 		{
 			FlightDistance = MapPawn->GetDistance();
 			UniverseBeforeBuilding = Universe;
-			MapPawn->SetDistance(6000.0); // 60 m
+			// The side at 0 deg (the builder's first) faces the camera; the view fits the design.
+			MapPawn->SetYaw(180.0);
+			if (APeriapsisBuilderView* BuilderView = GetBuilderView())
+			{
+				BuilderView->RefitCamera();
+			}
+		}
+		else if (Universe != UniverseBeforeBuilding && Universe && Universe->NumVessels() > 0)
+		{
+			MapPawn->SetDistance(FUnitBridge::ToUnreal(Universe->GetVessel(FPeriapsisUniverse::ActiveVessel).Size()) * 3.6); // a new launch
 		}
 		else
 		{
-			MapPawn->SetDistance(Universe != UniverseBeforeBuilding ? 8000.0 : FlightDistance);
+			MapPawn->SetDistance(FlightDistance);
 		}
 	}
 	bWasBuilding = bBuilding;
@@ -271,6 +281,7 @@ void APeriapsisPlayerController::PlayerTick(float DeltaTime)
 		{EKeys::Six, AttitudeMode::RadialIn},
 		{EKeys::Seven, AttitudeMode::SurfaceRetrograde},
 		{EKeys::Eight, AttitudeMode::SurfacePrograde},
+		{EKeys::Nine, AttitudeMode::Up},
 	};
 	for (const TPair<FKey, AttitudeMode>& Binding : AttitudeKeys)
 	{

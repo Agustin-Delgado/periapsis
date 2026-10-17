@@ -17,6 +17,7 @@
 #include "PeriapsisCore/Kepler.h"
 #include "PeriapsisCore/OrbitalElements.h"
 #include "PeriapsisCore/Surface.h"
+#include "PeriapsisMapPawn.h"
 #include "PeriapsisTerrain.h"
 #include "PeriapsisFlightSubsystem.h"
 #include "PeriapsisUniverse.h"
@@ -200,6 +201,24 @@ FVector APeriapsisUniverseView::FocusLocation(const FPeriapsisUniverse& Universe
 	return View.ToWorld(Universe.BodyPositionAt(Focus - Universe.NumVessels(), View.Time));
 }
 
+FVector APeriapsisUniverseView::CameraUp(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View) const
+{
+	// Near the ground the camera's up is the local vertical; higher up it fades back to the
+	// world's, which keeps the orbits and the system steady on the screen.
+	const FVector WorldUp = FVector::UpVector;
+	if (Focus >= Universe.NumVessels())
+	{
+		return WorldUp;
+	}
+	const Flight& F = *Universe.GetVessel(Focus).Flight;
+	const CelestialBody& Body = Universe.GetSystem().Body(F.BodyIndex());
+	const double Altitude = Norm(F.State().Position) - Body.Radius;
+	const double Fade = FMath::Max(Universe.GetBodyInfo(F.BodyIndex()).RotatingFrameAltitude, 0.02 * Body.Radius);
+	const double Weight = FMath::Clamp(2.0 - Altitude / Fade, 0.0, 1.0); // local below Fade, world above twice that
+	const FVector Local = View.DirectionToWorld(Normalized(F.State().Position));
+	return FMath::Lerp(WorldUp, Local, Weight).GetSafeNormal(UE_SMALL_NUMBER, WorldUp);
+}
+
 double APeriapsisUniverseView::ScreenScale(const FVector& At) const
 {
 	// A length that looks about the same on screen at any zoom: a fraction of the camera distance.
@@ -269,6 +288,16 @@ void APeriapsisUniverseView::Tick(float DeltaSeconds)
 	if (APawn* Camera = UGameplayStatics::GetPlayerPawn(this, 0))
 	{
 		Camera->SetActorLocation(Focused);
+		if (APeriapsisMapPawn* MapPawn = Cast<APeriapsisMapPawn>(Camera))
+		{
+			MapPawn->SetUp(CameraUp(*Universe, View));
+		}
+		// This view ticks after the camera took this frame's view (it needs the physics results):
+		// take it again, or the camera trails a fast rocket by a frame (7 m at 400 m/s).
+		if (APlayerCameraManager* CameraManager = UGameplayStatics::GetPlayerCameraManager(this, 0))
+		{
+			CameraManager->UpdateCamera(0.0f);
+		}
 	}
 	if (Terrain)
 	{

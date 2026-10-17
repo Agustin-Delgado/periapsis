@@ -29,6 +29,8 @@ namespace Periapsis::Core
 		RadialIn,
 		SurfacePrograde,   // along the velocity relative to the ground
 		SurfaceRetrograde, // against it: the landing attitude
+		Up,                // straight away from the body: the launch attitude (radial out is
+		                   // square to the velocity, and on the pad that is the body's rotation)
 	};
 
 	// The surface modes need the body (its rotation); without it they use the inertial velocity.

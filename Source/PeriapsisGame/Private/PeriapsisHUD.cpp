@@ -1,5 +1,6 @@
 #include "PeriapsisHUD.h"
 
+#include "CanvasItem.h"
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
@@ -32,6 +33,7 @@ namespace
 		case AttitudeMode::RadialIn: return TEXT("radial in");
 		case AttitudeMode::SurfacePrograde: return TEXT("surface prograde");
 		case AttitudeMode::SurfaceRetrograde: return TEXT("surface retrograde");
+		case AttitudeMode::Up: return TEXT("up");
 		}
 		return TEXT("?");
 	}
@@ -72,9 +74,53 @@ void APeriapsisHUD::DrawLines(const TArray<FString>& Lines, float X, float Y, co
 {
 	UFont* Font = GEngine->GetMediumFont();
 	const float LineHeight = Font->GetMaxCharHeight() * Scale * 1.15f;
+	const float Gap = 14.0f * Scale;
+
+	// Tabs split a line into cells; the cells of a block line up in columns as wide as their
+	// widest cell (the font is proportional, so padding with spaces does not align).
+	TArray<TArray<FString>> Cells;
+	TArray<float> Widths;
 	for (const FString& Line : Lines)
 	{
-		DrawText(Line, Color, X, Y, Font, Scale);
+		TArray<FString>& Row = Cells.AddDefaulted_GetRef();
+		Line.ParseIntoArray(Row, TEXT("	"), false);
+		if (Row.Num() < 2)
+		{
+			continue; // a line without tabs takes the whole width
+		}
+		for (int32 Column = 0; Column < Row.Num(); ++Column)
+		{
+			float Width = 0.0f, Height = 0.0f;
+			GetTextSize(Row[Column], Width, Height, Font, Scale);
+			if (Widths.Num() <= Column)
+			{
+				Widths.Add(0.0f);
+			}
+			Widths[Column] = FMath::Max(Widths[Column], Width);
+		}
+	}
+
+	FCanvasTextItem Item(FVector2D::ZeroVector, FText::GetEmpty(), Font, Color);
+	Item.Scale = FVector2D(Scale, Scale);
+	Item.EnableShadow(FLinearColor(0.0f, 0.0f, 0.0f, 0.85f), FVector2D(Scale, Scale)); // readable over a bright ground
+	for (int32 Index = 0; Index < Lines.Num(); ++Index)
+	{
+		const TArray<FString>& Row = Cells[Index];
+		if (Row.Num() < 2)
+		{
+			Item.Text = FText::FromString(Lines[Index]);
+			Canvas->DrawItem(Item, X, Y);
+		}
+		else
+		{
+			float CellX = X;
+			for (int32 Column = 0; Column < Row.Num(); ++Column)
+			{
+				Item.Text = FText::FromString(Row[Column]);
+				Canvas->DrawItem(Item, CellX, Y);
+				CellX += Widths[Column] + Gap;
+			}
+		}
 		Y += LineHeight;
 	}
 }
@@ -99,7 +145,7 @@ void APeriapsisHUD::DrawBuilder(const APeriapsisPlayerController& Controller, fl
 	for (int32 Index = 0; Index < static_cast<int32>(Catalog.Parts.size()); ++Index)
 	{
 		const PartDefinition& Part = Catalog.Parts[Index];
-		Left.Add(FString::Printf(TEXT("%s %-26s %6.0f kg  %5.0f"), Index == Builder->GetSelectedPart() ? TEXT(">") : TEXT(" "),
+		Left.Add(FString::Printf(TEXT("%s	%s	%.0f kg	%.0f"), Index == Builder->GetSelectedPart() ? TEXT(">") : TEXT(""),
 			UTF8_TO_TCHAR(Part.Name.c_str()), Part.WetMass(), Part.Cost));
 	}
 	Left.Add(TEXT(""));
@@ -140,15 +186,16 @@ void APeriapsisHUD::DrawBuilder(const APeriapsisPlayerController& Controller, fl
 	{
 		const std::vector<StageStats> Vacuum = Builder->Stats(0.0, Gravity);
 		const std::vector<StageStats> SeaLevel = Builder->Stats(kStandardAtmospherePa, Gravity);
-		Right.Add(FString::Printf(TEXT("%d parts   %.1f t   cost %.0f"), static_cast<int32>(Craft.Parts().size()), Craft.Mass() / 1000.0, Craft.Cost()));
+		const int32 PartCount = static_cast<int32>(Craft.Parts().size());
+		Right.Add(FString::Printf(TEXT("%d part%s   %.1f t   cost %.0f"), PartCount, PartCount == 1 ? TEXT("") : TEXT("s"), Craft.Mass() / 1000.0, Craft.Cost()));
 		Right.Add(FString::Printf(TEXT("Delta-v    %.0f m/s vacuum, %.0f m/s sea level"), TotalDeltaV(Vacuum), TotalDeltaV(SeaLevel)));
 		Right.Add(TEXT(""));
-		Right.Add(TEXT("Stage   dv vac / SL      TWR vac / SL   burn     mass"));
+		Right.Add(TEXT("Stage	dv vac / SL	TWR vac / SL	burn	mass"));
 		for (size_t Index = 0; Index < Vacuum.size(); ++Index)
 		{
 			const StageStats& V = Vacuum[Index];
 			const StageStats& S = SeaLevel[Index];
-			Right.Add(FString::Printf(TEXT("S%-3d  %5.0f / %5.0f   %5.2f / %5.2f   %-7s %5.1f t"), V.Stage, V.DeltaV, S.DeltaV, V.StartTwr, S.StartTwr,
+			Right.Add(FString::Printf(TEXT("S%d	%.0f / %.0f m/s	%.2f / %.2f	%s	%.1f t"), V.Stage, V.DeltaV, S.DeltaV, V.StartTwr, S.StartTwr,
 				*FormatDuration(V.BurnTime), V.StartMass / 1000.0));
 		}
 		Right.Add(TEXT(""));
@@ -254,7 +301,8 @@ void APeriapsisHUD::DrawHUD()
 	Lines.Add(FString::Printf(TEXT("Throttle   %3.0f%%%s"), ShipFlight.Throttle() * 100.0, ShipFlight.IsThrusting() ? TEXT("  BURNING") : TEXT("")));
 	Lines.Add(FString::Printf(TEXT("Attitude   %s"), AttitudeName(Universe->GetAttitude())));
 	const Vessel& Craft = ShipFlight.GetVessel();
-	Lines.Add(FString::Printf(TEXT("Mass       %.0f kg, %d parts  (propellant %.0f kg)"), Craft.Mass(), static_cast<int32>(Craft.Parts().size()),
+	const int32 PartCount = static_cast<int32>(Craft.Parts().size());
+	Lines.Add(FString::Printf(TEXT("Mass       %.0f kg, %d part%s  (propellant %.0f kg)"), Craft.Mass(), PartCount, PartCount == 1 ? TEXT("") : TEXT("s"),
 		Craft.PropellantMass()));
 	// Stages still to come, at full throttle in vacuum, against the gravity here (spec 4.5).
 	const std::vector<StageStats> Stages = AnalyzeStages(Craft, 0.0, LocalGravity);
@@ -267,7 +315,7 @@ void APeriapsisHUD::DrawHUD()
 			: FString(TEXT("Stages     all fired")));
 		for (const StageStats& Stage : Stages)
 		{
-			Lines.Add(FString::Printf(TEXT("  %-6s   %5.0f m/s  TWR %.2f  %s"), Stage.Stage < 0 ? TEXT("now") : *FString::Printf(TEXT("S%d"), Stage.Stage),
+			Lines.Add(FString::Printf(TEXT("  %s	%.0f m/s	TWR %.2f	%s"), Stage.Stage < 0 ? TEXT("now") : *FString::Printf(TEXT("S%d"), Stage.Stage),
 				Stage.DeltaV, Stage.StartTwr, *FormatDuration(Stage.BurnTime)));
 		}
 	}
@@ -321,7 +369,7 @@ void APeriapsisHUD::DrawHUD()
 		const TArray<FString> Help = {
 			TEXT("Shift / Ctrl  throttle up / down     Z / X  full / cut     Space  stage"),
 			TEXT("1-6  prograde, retrograde, normal, anti-normal, radial out, radial in"),
-			TEXT("7 / 8  surface retrograde (for landing) / surface prograde"),
+			TEXT("7 / 8  surface retrograde (for landing) / surface prograde    9  up (for launch)"),
 			TEXT(". / ,  warp up / down     /  warp 1x"),
 			TEXT("Right drag  rotate     Wheel  zoom     Tab  next focus"),
 			TEXT("R  restart     B  builder     F1  hide help"),

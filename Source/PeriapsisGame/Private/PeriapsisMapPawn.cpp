@@ -8,6 +8,7 @@
 
 APeriapsisMapPawn::APeriapsisMapPawn()
 {
+	PrimaryActorTick.bCanEverTick = true;
 	RootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 
 	Arm = CreateDefaultSubobject<USpringArmComponent>(TEXT("Arm"));
@@ -16,7 +17,7 @@ APeriapsisMapPawn::APeriapsisMapPawn()
 	Arm->bEnableCameraLag = false;
 	Arm->bUsePawnControlRotation = false;
 	Arm->SetUsingAbsoluteRotation(true);
-	Arm->SetRelativeRotation(FRotator(-35.0, 0.0, 0.0));
+	ApplyRotation();
 	Arm->TargetArmLength = 5.0e8; // 5,000 km: the home planet and the parking orbit
 	// -CameraDistance=<metres> starts closer, e.g. on the ground (screenshots, landing tests).
 	double Metres = 0.0;
@@ -32,10 +33,41 @@ APeriapsisMapPawn::APeriapsisMapPawn()
 
 void APeriapsisMapPawn::Orbit(double DeltaYawDegrees, double DeltaPitchDegrees)
 {
-	FRotator Rotation = Arm->GetRelativeRotation();
-	Rotation.Yaw += DeltaYawDegrees;
-	Rotation.Pitch = FMath::Clamp(Rotation.Pitch + DeltaPitchDegrees, -89.0, 89.0);
-	Arm->SetRelativeRotation(Rotation);
+	Yaw = FRotator::NormalizeAxis(Yaw + DeltaYawDegrees);
+	Pitch = FMath::Clamp(Pitch + DeltaPitchDegrees, -89.0, 89.0);
+	ApplyRotation();
+}
+
+void APeriapsisMapPawn::SetYaw(double YawDegrees)
+{
+	Yaw = FRotator::NormalizeAxis(YawDegrees);
+	ApplyRotation();
+}
+
+void APeriapsisMapPawn::SetUp(const FVector& Up)
+{
+	const FVector Unit = Up.GetSafeNormal();
+	if (!Unit.IsZero())
+	{
+		// The smallest turn from the up of now, so the view does not spin about the new up.
+		TargetUpFrame = FQuat::FindBetweenNormals(TargetUpFrame.GetUpVector(), Unit) * TargetUpFrame;
+	}
+}
+
+void APeriapsisMapPawn::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!UpFrame.Equals(TargetUpFrame, 1e-6))
+	{
+		const float RealDelta = GetWorld() ? GetWorld()->DeltaRealTimeSeconds : DeltaSeconds;
+		UpFrame = FQuat::Slerp(UpFrame, TargetUpFrame, FMath::Clamp(RealDelta * 4.0f, 0.0f, 1.0f)).GetNormalized();
+		ApplyRotation();
+	}
+}
+
+void APeriapsisMapPawn::ApplyRotation()
+{
+	Arm->SetRelativeRotation(UpFrame * FQuat(FRotator(Pitch, Yaw, 0.0)));
 }
 
 void APeriapsisMapPawn::Zoom(double Factor, double MinDistance)

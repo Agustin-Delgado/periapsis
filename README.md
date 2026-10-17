@@ -53,6 +53,7 @@ You can also run it as a standalone window:
 | `Z` / `X` | Full throttle / cut engine |
 | `1`–`6` | Hold prograde, retrograde, normal, anti-normal, radial out, radial in |
 | `7` / `8` | Hold surface retrograde (for landing) / surface prograde |
+| `9` | Hold up, straight away from the body (for launch) |
 | `.` / `,` | Time warp up / down (at most 4x while the engine burns; above 4x the physics bubble switches off) |
 | `/` | Back to 1x |
 | Right mouse drag | Rotate the camera |
@@ -87,14 +88,14 @@ three-stage rocket of 54 parts, or start from a pod with `N`:
 
 The right side shows delta-v, thrust-to-weight (on home), burn time and mass per stage, in
 vacuum and at sea level. On the pad, press `Z` for full throttle and `Space` to light the first
-stage; `Space` again drops the boosters. Hold `5` (radial out) for a while, then `1`
-(prograde) to bend the climb into an orbit. `-Scenario=scenarios/launch_pad.json` starts on the
+stage; `Space` again drops the boosters. The rocket holds `9` (up) from the pad; `1`
+(prograde) bends the climb towards an orbit. `-Scenario=scenarios/launch_pad.json` starts on the
 pad directly.
 
 ### Try it: a landing
 
 Start on the ground with `-Scenario=scenarios/landing_hop.json -CameraDistance=40` added to the
-launch command: the ship touches down, settles and shows `LANDED`. Press `5` (radial out) and
+launch command: the ship touches down, settles and shows `LANDED`. Press `9` (up) and
 `Z` to hop, `X` to cut, and `7` to fall back engine-first.
 
 From orbit: burn retrograde until the periapsis is well below the ground, coast, then hold `7`

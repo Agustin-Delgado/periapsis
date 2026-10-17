@@ -56,6 +56,8 @@ private:
 		bool bActive) const;
 	FVector VesselLocation(const FPeriapsisUniverse& Universe, int32 Vessel, const FPeriapsisViewTransform& View) const;
 	FVector FocusLocation(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View) const;
+	// Up for the camera's orbit, in the world.
+	FVector CameraUp(const FPeriapsisUniverse& Universe, const FPeriapsisViewTransform& View) const;
 	double ScreenScale(const FVector& At) const;
 
 	UPROPERTY()

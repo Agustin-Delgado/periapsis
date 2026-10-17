@@ -59,7 +59,11 @@ Spec 5.2 recommends a compound rigid body plus a logical structural model. That 
   boosters below it, just before the boosters run dry).
   Ground contact loads and impacts per part (spec 5.9) are not modelled yet.
 - **Attitude** is still held perfectly, as in M3; the roll is fixed by convention (the vessel's
-  X axis as close as possible to the body's pole), and every placement in space follows it.
+  X axis as close as possible to the body's pole), and every placement in space follows it. A new
+  mode, `up` (key `9`), points straight away from the body: the launch attitude. Radial out is
+  square to the velocity, as in KSP, and on the pad the velocity is the body's rotation, so a
+  rocket launched radial out leaned west by 25 degrees in five seconds and drifted 55 m/s over
+  the ground (`Periapsis.Sim.Launch.StraightUpFromThePad` holds it under 3 m/s; it drifts 0.2).
 
 ## Delta-v per stage
 
@@ -117,10 +121,38 @@ pad (`scenarios/launch_pad.json`).
 Mouse placement, mirror symmetry, centre of pressure (needs M6) and subassemblies are left for
 later; so are reaction wheels, gimbals and manual attitude control.
 
+## QA pass
+
+Before handing M5 over, the builder and a launch were played on screen and the builder was
+fuzzed (`Periapsis.Sim.Parts.BuilderFuzz`: 60 sessions of 250 random key presses, from empty,
+from a pod and from the Trident; after every press the design is valid, weighs, analyses and
+survives a save and a load, and each final design flies its stages on rails and in a bubble
+with every state finite). What the screen showed and was fixed:
+
+- The camera orbited about the world's Z, which on the pad at latitude 5 is nearly horizontal:
+  the ground looked like a wall and the rocket lay on its side. Near the ground the camera's up
+  is now the local vertical, fading back to the world's above twice the rotating-frame altitude.
+- The camera trailed a fast rocket by a frame (the view ticks after the camera manager, to have
+  the physics results); it takes the view again after moving.
+- F1 (help) and F5 (save) also fired the engine's debug view modes (wireframe, shader
+  complexity); those bindings, and the Shift ones, are removed in `DefaultInput.ini`.
+- Motion blur smeared the rocket the camera follows; it is off.
+- The builder's fill light competed with its main light for forward shading (an on-screen
+  engine warning over the parts list); the main light has the priority.
+- The builder framed the centre of mass at a fixed 60 m: tall rockets were cut and small ones
+  tiny. It frames the design's middle and refits whenever the design changes size.
+- The first side target (0 degrees) was behind the rocket; the builder camera now faces it, and
+  the target arrow draws over the parts.
+- HUD text had no shadow (unreadable over the bright ground) and its columns were padded with
+  spaces in a proportional font; cells are tab-separated and aligned by measured width.
+
 ## Pending
 
 - Ground contact loads, impact speed per part and landing legs (spec 5.9, 5.10).
 - Torques: reaction wheels, gimbal, off-axis thrust (only the axial part of each engine's
   thrust counts now).
 - Debris lifetimes: spent stages stay as vessels until they crash or leave the bubble.
-- The builder's mouse interaction and its look (materials, a pad) are for a person.
+- The builder's mouse interaction and its look (materials, a pad) are for a person. Parts are one
+  flat grey per category: tanks, pods and engines read alike, and engines have no bell.
+- Above the rotating-frame altitude the camera's up returns to the world's Z, so a rocket climbing
+  through it appears to tilt on screen.

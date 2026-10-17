@@ -4,7 +4,7 @@
 	"start_time_s": 0,
 	"ship": {
 		"design": "vessels/trident.json",
-		"attitude": "radial_out"
+		"attitude": "up"
 	},
 	"start_surface": {
 		"body": "home",

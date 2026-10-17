@@ -16,6 +16,10 @@ namespace Periapsis::Core
 	{
 		constexpr double MinSpeedForDirection = 0.5; // m/s
 		const Vec3 Up = Normalized(State.Position);
+		if (Mode == AttitudeMode::Up)
+		{
+			return Up;
+		}
 		if (Mode == AttitudeMode::SurfacePrograde || Mode == AttitudeMode::SurfaceRetrograde)
 		{
 			const Vec3 Relative = Body ? State.Velocity - GroundVelocity(*Body, State.Position) : State.Velocity;
@@ -46,6 +50,7 @@ namespace Periapsis::Core
 			return -Basis.RadialOut;
 		case AttitudeMode::SurfacePrograde:
 		case AttitudeMode::SurfaceRetrograde:
+		case AttitudeMode::Up:
 			break;
 		}
 		return Basis.Prograde;

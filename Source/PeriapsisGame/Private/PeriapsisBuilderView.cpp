@@ -11,6 +11,7 @@
 #include "PeriapsisBubble.h"
 #include "PeriapsisDataLoader.h"
 #include "PeriapsisFlightSubsystem.h"
+#include "PeriapsisMapPawn.h"
 #include "PeriapsisUniverse.h"
 #include "ProceduralMeshComponent.h"
 #include "UObject/ConstructorHelpers.h"
@@ -44,12 +45,14 @@ APeriapsisBuilderView::APeriapsisBuilderView()
 	Light->SetMobility(EComponentMobility::Movable);
 	Light->SetIntensity(6.0f);
 	Light->SetRelativeRotation(FRotator(-35.0, 140.0, 0.0));
+	Light->ForwardShadingPriority = 2; // over the sun (hidden with the universe) and the fill light
 	FillLight = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("FillLight"));
 	FillLight->SetupAttachment(RootComponent);
 	FillLight->SetMobility(EComponentMobility::Movable);
 	FillLight->SetIntensity(2.5f);
 	FillLight->SetCastShadows(false);
 	FillLight->SetRelativeRotation(FRotator(-10.0, -40.0, 0.0));
+	FillLight->ForwardShadingPriority = 0;
 
 	static ConstructorHelpers::FObjectFinder<UMaterialInterface> BasicMaterial(TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
 	Material = BasicMaterial.Object;
@@ -203,22 +206,45 @@ void APeriapsisBuilderView::Tick(float DeltaSeconds)
 	}
 
 	const Vessel Craft = Builder->MakeVessel();
-	const FVector Center = Craft.IsValid() ? FUnitBridge::ToUnreal(Craft.CenterOfMass()) : FVector::ZeroVector;
+	FVector Center = FVector::ZeroVector;
+	double Radius = 3.0; // m
 	if (Craft.IsValid())
 	{
-		DrawDebugSphere(GetWorld(), Center, 25.0f, 12, CenterOfMassColor, false, -1.0f, 1, 2.0f);
-		DrawDebugString(GetWorld(), Center, TEXT("CoM"), nullptr, CenterOfMassColor, 0.0f, true, 1.0f);
+		const FVector CenterOfMass = FUnitBridge::ToUnreal(Craft.CenterOfMass());
+		DrawDebugSphere(GetWorld(), CenterOfMass, 25.0f, 12, CenterOfMassColor, false, -1.0f, SDPG_Foreground, 2.0f);
+		DrawDebugString(GetWorld(), CenterOfMass + FVector(0.0, 0.0, 40.0), TEXT("CoM"), nullptr, CenterOfMassColor, 0.0f, true, 1.0f);
+		// The camera looks at the middle of the design, not at its centre of mass (which sits low
+		// in a fuelled rocket), and backs off to fit it.
+		const Vec3 Axis{0.0, 0.0, 1.0};
+		const Vec3 From = Craft.CenterOfMass();
+		const double Top = Craft.Extent(Axis, From);
+		const double Bottom = Craft.Extent(-Axis, From);
+		Center = FUnitBridge::ToUnreal(From + Axis * (0.5 * (Top - Bottom)));
+		double Side = 0.0;
+		for (const Vec3& Direction : {Vec3{1.0, 0.0, 0.0}, Vec3{-1.0, 0.0, 0.0}, Vec3{0.0, 1.0, 0.0}, Vec3{0.0, -1.0, 0.0}})
+		{
+			Side = FMath::Max(Side, Craft.Extent(Direction, From));
+		}
+		Radius = FMath::Max(0.5 * (Top + Bottom), Side);
 	}
 	const FPeriapsisAttachTarget Target = Builder->GetTarget();
 	if (Target.Instance != INDEX_NONE)
 	{
 		const FVector At = FUnitBridge::ToUnreal(Target.Position);
 		const FVector Out = FUnitBridge::DirectionToUnreal(Target.Direction);
-		DrawDebugDirectionalArrow(GetWorld(), At, At + Out * 120.0, 40.0f, TargetColor, false, -1.0f, 2, 3.0f);
-		DrawDebugPoint(GetWorld(), At, 12.0f, TargetColor, false, -1.0f, 2);
+		const float Length = FMath::Clamp(static_cast<float>(FUnitBridge::ToUnreal(Radius)) * 0.25f, 60.0f, 400.0f);
+		DrawDebugDirectionalArrow(GetWorld(), At, At + Out * Length, Length * 0.3f, TargetColor, false, -1.0f, SDPG_Foreground, 3.0f);
+		DrawDebugPoint(GetWorld(), At, 12.0f, TargetColor, false, -1.0f, SDPG_Foreground);
 	}
-	if (APawn* Camera = UGameplayStatics::GetPlayerPawn(this, 0))
+	if (APeriapsisMapPawn* Camera = Cast<APeriapsisMapPawn>(UGameplayStatics::GetPlayerPawn(this, 0)))
 	{
 		Camera->SetActorLocation(Center);
+		Camera->SetUp(FVector::UpVector);
+		// Refit when the design changes size; between changes the zoom is the player's.
+		if (!FMath::IsNearlyEqual(Radius, FramedRadius, 0.05 * FramedRadius))
+		{
+			FramedRadius = Radius;
+			Camera->SetDistance(FUnitBridge::ToUnreal(Radius) * 3.6);
+		}
 	}
 }
